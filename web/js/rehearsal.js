@@ -22,7 +22,7 @@ export function tick(room,dt,{autoGuard=true,beam=null}={}){if(room.ended)return
  }
  if(beam)updateExposure(room,dt,beam);
  if(room.light&&!room.light.beam){room.light.age+=dt;if(!room.light.judged&&room.light.age>=C.warning+C.grace){room.light.judged=true;for(const p of room.players){if(p.escapedAt===null&&p.freeze<=0&&inGap(p.x,room.light.gap)&&!screenedFromPatrol(p,room.light.gap)){clearCover(p);p.x=p.saved;p.freeze=C.freeze;p.caught++;p.hidden=true;room.catches++;room.events.push({type:'caught',playerId:p.id});}}}if(room.light.age>1.5)room.light=null;}
- if(autoGuard&&room.t>=room.nextLight&&!room.light&&room.charges>=1){let best=0,bestN=-1;for(let g=0;g<8;g++){const n=room.players.filter(p=>p.escapedAt===null&&inGap(p.x+p.dir*.8,g)).length;if(n>bestN){bestN=n;best=g;}}target(room,best);room.nextLight=room.t+3.4+(room.id*.27);}
+ if(autoGuard&&room.t>=room.nextLight&&!room.light&&room.charges>=1){let best=0,bestN=-1;for(let g=0;g<8;g++){if(g===room.lastPatrolGap)continue;const n=room.players.filter(p=>p.escapedAt===null&&inGap(p.x+p.dir*.8,g)).length;if(n>bestN){bestN=n;best=g;}}target(room,best);room.lastPatrolGap=best;room.nextLight=room.t+3.4+(room.id*.27);}
  if(room.t>=C.duration){room.t=C.duration;room.ended=true;room.events.push({type:'end'});}return room;
 }
 export function screenedFromPatrol(p,gap){const pose=coverPose(p);if(!pose)return false;const x=(C.frames[gap]+(C.frames[gap+1]??C.exit))*1.6;return lineBlocked({x,y:5.7,z:3.8},{...pose,y:1.1});}

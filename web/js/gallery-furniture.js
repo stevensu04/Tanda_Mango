@@ -7,6 +7,17 @@ export function archiveCabinet(){
 }
 export function restorationTable(){
  const g=new T.Group();g.name='Conservator worktable with frame, tools and archival papers';g.add(box(2.2,.1,.95,edge,0,.88));g.add(box(2.05,.2,.8,oak,0,.73));for(const x of [-.91,.91])for(const z of [-.34,.34])g.add(box(.095,.7,.095,oak,x,.35,z));g.add(box(1.8,.06,.07,oak,0,.2,.3));g.add(box(1.45,.012,.7,green,-.15,.938));const f=frame(.65,.45);f.rotation.x=-Math.PI/2;f.scale.setScalar(.75);f.position.set(-.35,.98,0);g.add(f);
+ // Brass inspection lens mounted above the corner of the work mat.
+ const base=new T.Mesh(new T.CylinderGeometry(.075,.09,.025,20),brass);
+ base.position.set(-.88,.947,-.28);g.add(base);
+ g.add(box(.022,.26,.022,brass,-.88,1.08,-.28));
+ g.add(box(.18,.022,.022,brass,-.8,1.2,-.28));
+ const rim=new T.Mesh(new T.TorusGeometry(.11,.01,8,32),brass);
+ rim.rotation.x=-1.15;rim.position.set(-.62,1.2,-.28);g.add(rim);
+ const lens=new T.Mesh(new T.CircleGeometry(.105,32),new T.MeshStandardMaterial({
+   color:0xb6d8cf,transparent:true,opacity:.32,roughness:.12,side:T.DoubleSide
+ }));
+ lens.rotation.copy(rim.rotation);lens.position.copy(rim.position);g.add(lens);
  for(let i=0;i<4;i++){const sheet=box(.32,.006,.42,paper,.65+i*.012,.943+i*.006,.05);sheet.rotation.y=.06*i;g.add(sheet);}for(let i=0;i<3;i++){const brush=box(.012,.012,.24,edge,.3+i*.07,.96,-.2);brush.rotation.y=-.2;g.add(brush);g.add(box(.018,.016,.045,paper,.28+i*.07,.96,-.32));}return g;
 }
 export const FURNITURE={archiveCabinet,restorationTable};
