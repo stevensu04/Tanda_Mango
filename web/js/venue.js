@@ -11,6 +11,7 @@ for(const x of [0,1,4,5,7,8,11,12.5])add(x*3.2,2.5,-2.15,.22,2.6,2,'frame');
 for(const x of [8,24,38])add(x,.35,3.7,1.7,.7,.62,'bench');
 add(18,.45,3.4,.85,.9,.85,'display');add(-4,.6,-2.4,2,1.2,1,'desk');
 for(const [a,b]of [[19,28],[35,41]]){add((a+b)/2,1.6,9.5,b-a,3.2,.2);add((a+b)/2,1.6,11.5,b-a,3.2,.2);}
+add(28.7,.48,7.2,.95,.96,2.2,'furniture');add(47.5,1.3,7.5,.76,2.6,2.5,'furniture');
 export function inVenue(x,z,r=.25){return [[-r,-r],[-r,r],[r,-r],[r,r]].every(([dx,dz])=>WALK_AREAS.some(a=>x+dx>=a.x0&&x+dx<=a.x1&&z+dz>=a.z0&&z+dz<=a.z1))&&!SOLIDS.some(b=>b.y-b.h/2<1.75&&b.y+b.h/2>.1&&x+r>b.x-b.w/2&&x-r<b.x+b.w/2&&z+r>b.z-b.d/2&&z-r<b.z+b.d/2);}
 export function moveGuard(p,dx,dz){const steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.1));for(let i=0;i<steps;i++){if(inVenue(p.x+dx/steps,p.z))p.x+=dx/steps;if(inVenue(p.x,p.z+dz/steps))p.z+=dz/steps;}return p;}
 export function lineBlocked(from,to,solids=SOLIDS){const d={x:to.x-from.x,y:to.y-from.y,z:to.z-from.z};return solids.some(b=>{let lo=.001,hi=.999;for(const [axis,size]of [['x','w'],['y','h'],['z','d']]){const min=b[axis]-b[size]/2,max=b[axis]+b[size]/2;if(Math.abs(d[axis])<1e-9){if(from[axis]<min||from[axis]>max)return false;}else{let a=(min-from[axis])/d[axis],c=(max-from[axis])/d[axis];if(a>c)[a,c]=[c,a];lo=Math.max(lo,a);hi=Math.min(hi,c);if(lo>hi)return false;}}return true;});}
