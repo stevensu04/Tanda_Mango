@@ -22,3 +22,5 @@ Open http://127.0.0.1:5186. Hold RUN / right arrow to move; release on gold near
 Verification: `npm test`, `node scripts/audit-assets.mjs`, `npm run build`.
 
 Secrets belong only in local `.env`. Neither the static server nor build includes it. Current work is committed and pushed at the user’s request. Deployment remains separate.
+
+During an escape, press V or use the camera button to switch between eye level and third-person follow. Mint floor chevrons and a brass post with a diamond lamp mark each usable cabinet entrance. Open the monitor dashboard from the lobby to compare all four local rooms and select a gallery camera.

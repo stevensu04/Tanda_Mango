@@ -17,3 +17,10 @@ body[data-mode="guard"] #progress,body[data-mode="guard"] #rank{display:none}
 #take-cover{padding:.35rem .7rem;margin-top:.3rem;font:600 .66rem monospace;letter-spacing:.04em;border:1px solid #b59b66;background:#243a31;color:#f0dcae;min-height:32px}
 #take-cover:disabled{opacity:.4}
 .cover-mark{position:absolute;width:8px;height:8px;top:24px;background:#7eafa2;transform:translateX(-50%) rotate(45deg);border:1px solid #cee1d8}
+body[data-mode="player"] #camera-toggle{position:relative;z-index:6}
+#dashboard{position:absolute;top:5rem;left:1rem;z-index:5;background:#10251ff2;color:#f6e5bb;padding:.7rem;border:1px solid #988459;max-width:calc(100vw - 2rem)}
+#dashboard h3{margin:0 0 .4rem;font-size:1rem}
+#monitor-rooms{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.3rem}
+#monitor-rooms button{display:grid;gap:.2rem;text-align:left;padding:.4rem;background:#20382d;color:inherit;font-size:.72rem}
+#monitor-rooms button[aria-pressed=true]{outline:2px solid #dbc088}
+body[data-mode="projection"] #side-panel{display:none}

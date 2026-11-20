@@ -19,7 +19,37 @@ window.addEventListener('blur',release);document.addEventListener('visibilitycha
 function notify(message,seconds=1.4){cue=message;cueUntil=performance.now()+seconds*1000;}
 function route(room){const progress=$('#progress');progress.replaceChildren();for(const c of COVERS){const mark=document.createElement('i');mark.className='cover-mark';mark.style.left=`${c.x/C.exit*100}%`;mark.title='Cabinet cover · C nearby';progress.append(mark);}for(const x of [...C.frames,C.exit]){const mark=document.createElement('i');mark.className='safe-mark';mark.style.left=`${x/C.exit*100}%`;progress.append(mark);}for(const [i,p]of room.players.entries()){const dot=document.createElement('i');dot.className=`route-dot ${p.bot?'':'you'}`;dot.dataset.player=p.id;dot.style.top=`${p.bot?6+(i%3)*7:9}px`;dot.title=p.bot?'Ghost visitor':CAST[p.character].name;progress.append(dot);}}
 async function switchRoom(index){loading=true;if(guardController&&mode==='guard'){guardController.pause();guardController.reset();}$('#guard-room').value=String(index);transport.switchRoom(index);$('#room-name').textContent=ROOMS[index].toUpperCase();route(transport.rooms[index]);document.querySelectorAll('[data-room]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.room)===index)));$('#load-status').textContent='Preparing rigged characters…';try{await gameView?.syncActors(transport.rooms[index]);loading=false;$('#load-status').textContent='';}catch(e){$('#load-status').textContent='A character could not load. Refresh to retry.';console.error(e);}}
-async function start(nextMode='player'){exploring=nextMode==='explore';mode=exploring?'guard':nextMode;document.body.dataset.mode=mode;roundFinished=false;release();transport?.close();transport=new RehearsalTransport(character,mode);show('play');$('.clock span').textContent=exploring?'FREE TOUR':'SECONDS LEFT';$('#mode-title').textContent=mode==='guard'?'A very suspicious night.':mode==='projection'?'The museum is alive.':'Make your escape.';$('#player-controls').hidden=mode!=='player';$('#guard-controls').hidden=mode!=='guard';$('#guard-reticle').hidden=mode!=='guard';$('#player-label').textContent=mode==='player'?`YOU · ${CAST[character].name.toUpperCase()}`:mode==='guard'?'NIGHT WATCH / FIRST PERSON':'GALLERY MONITOR · LOCAL REHEARSAL';$('#side-panel').classList.toggle('monitor',mode!=='player');$('#watch-title').textContent=mode==='guard'?'Catch them in the act.':'Keep an eye on the light.';$('#room-list').replaceChildren();if(mode!=='player')for(const [i,r]of ROOMS.entries()){const b=document.createElement('button');b.dataset.room=i;b.textContent=`0${i+1} · ${r.replace('The ','')}`;b.onclick=()=>switchRoom(i);$('#room-list').append(b);}
+let firstPerson = false;
+function togglePlayerView() {
+  if (mode !== 'player' || screen !== 'play' || !gameView) return;
+  firstPerson = !firstPerson;
+  gameView.playerFirstPerson = firstPerson;
+  $('#camera-toggle').textContent = firstPerson ? 'Third-person view' : 'First-person view';
+}
+$('#camera-toggle').onclick = togglePlayerView;
+window.addEventListener('keydown', event => {
+  if (event.code === 'KeyV' && !event.repeat) togglePlayerView();
+});
+const monitorRows = ROOMS.map((name, index) => {
+  const button = document.createElement('button');
+  const title = document.createElement('strong');
+  title.textContent = name;
+  const status = document.createElement('span');
+  button.append(title,status);
+  button.onclick = () => { if (!loading && mode === 'projection') switchRoom(index); };
+  $('#monitor-rooms').append(button);
+  return {button,status};
+});
+function updateMonitor() {
+  for (const room of transport.rooms) {
+    const row = monitorRows[room.id];
+    const escaped = room.players.filter(p => p.escapedAt !== null).length;
+    const status = Math.ceil(C.duration-room.t)+'s · '+escaped+'/'+room.players.length+' escaped · '+room.catches+' caught';
+    if (row.status.textContent !== status) row.status.textContent = status;
+    row.button.setAttribute('aria-pressed',String(room.id === transport.room));
+  }
+}
+async function start(nextMode='player'){exploring=nextMode==='explore';mode=exploring?'guard':nextMode;document.body.dataset.mode=mode;$('#camera-toggle').hidden=mode!=='player';$('#dashboard').hidden=mode!=='projection';roundFinished=false;release();transport?.close();transport=new RehearsalTransport(character,mode);show('play');$('.clock span').textContent=exploring?'FREE TOUR':'SECONDS LEFT';$('#mode-title').textContent=mode==='guard'?'A very suspicious night.':mode==='projection'?'The museum is alive.':'Make your escape.';$('#player-controls').hidden=mode!=='player';$('#guard-controls').hidden=mode!=='guard';$('#guard-reticle').hidden=mode!=='guard';$('#player-label').textContent=mode==='player'?`YOU · ${CAST[character].name.toUpperCase()}`:mode==='guard'?'NIGHT WATCH / FIRST PERSON':'GALLERY MONITOR · LOCAL REHEARSAL';$('#side-panel').classList.toggle('monitor',mode!=='player');$('#watch-title').textContent=mode==='guard'?'Catch them in the act.':'Keep an eye on the light.';$('#room-list').replaceChildren();if(mode!=='player')for(const [i,r]of ROOMS.entries()){const b=document.createElement('button');b.dataset.room=i;b.textContent=`0${i+1} · ${r.replace('The ','')}`;b.onclick=()=>switchRoom(i);$('#room-list').append(b);}
  if(!gameView)try{gameView=new GalleryView($('#game-stage'));}catch(e){$('#game-stage').innerHTML='<p class="render-error">This browser could not start WebGL. Try a browser with hardware acceleration enabled. The route below still shows the rehearsal.</p>';console.error(e);}
  if(gameView&&!guardController){guardController=new GuardController(gameView.renderer.domElement,{onState:updateGuardControls});gameView.controller=guardController;}guardController?.setActive(mode==='guard');updateGuardControls();await switchRoom(mode==='player'?Number($('#room').value)||0:0);notify(mode==='guard'?'WASD move · Mouse aim · Hold click to expose':'You are alive. Make it look accidental.',2.5);if(navigator.wakeLock)navigator.wakeLock.request('screen').then(lock=>{window.addEventListener('pagehide',()=>lock.release(),{once:true});}).catch(()=>{});}
 $('#start').onclick=()=>start();document.querySelectorAll('button[data-mode]').forEach(b=>b.onclick=()=>b.dataset.mode==='collection'?show('collection'):start(b.dataset.mode));$('#leave').onclick=home;$('#result-home').onclick=home;$('#collection-home').onclick=home;$('.wordmark').onclick=e=>{e.preventDefault();home();};function home(){release();transport?.close();transport=null;show('lobby');}
@@ -41,6 +71,7 @@ function loop(now){const dt=Math.min((now-lastTime)/1000,.05);lastTime=now;if(sc
  $('#take-cover').disabled=me.freeze>0||(!covered&&!nearbyCover(me.x,room.id));$('#take-cover').textContent=covered?'C · LEAVE COVER':'C · TAKE COVER';const safe=isSafe(me.x);$('#safety').textContent=me.freeze>0?'CAUGHT · RETURNING TO FRAME':me.escapedAt!==null?'ON LOAN: FREEDOM':me.hidden?'HIDDEN IN FRAME':covered?(me.coverProgress===1?'BEHIND COVER · WATCH THE SIDES':'MOVING AROUND COVER'):safe||Math.abs(nearestFrame(me.x)-me.x)<=C.snapRadius?'RELEASE TO POSE':nearbyCover(me.x,room.id)?'COVER NEARBY · PRESS C':'KEEP MOVING';}
  const threatened=me&&room.light&&inGap(me.x,room.light.gap);$('#notice').textContent=performance.now()<cueUntil?cue:me?.coverId!==undefined?'Cabinets block sight, not all angles. Run to leave.':threatened?'RELEASE AT GOLD · Or press C beside a cover cabinet.':me?.hidden?'Nothing to see here. Just fine art.':room.light?mode==='guard'?'Keep the beam on an exposed portrait.':'The guard is looking. Watch the amber floor.':mode==='guard'?'Hold click to expose · Keep the target in the amber beam.':mode==='projection'?'Watching the gallery.':'Hold to run. Release near a frame to pose.';
  if(exploring)$('#notice').textContent='VENUE WALKTHROUGH · No timer or captures';
+ if(mode==='projection')updateMonitor();
  if(room.ended||(me?.escapedAt!==null&&me&&room.t-me.escapedAt>1.2))finish(room);
  }requestAnimationFrame(loop);}
 requestAnimationFrame(loop);
