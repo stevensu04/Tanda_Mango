@@ -102,3 +102,9 @@ Player instructions: release RUN on a gold frame to hide and save progress. Near
 The added test suite verifies collision-free entry/exit, checkpoint preservation, unavailable cover while caught, frontal light occlusion and successful flanking capture. These additions require backend agreement before multiplayer use. Timing and fun remain playtest questions, not a claim of player-validated balance.
 
 Acceptance for this pass: 19 automated tests pass; the browser was used to enter cover, remain behind the cabinet and inspect it from the guard's side. Latest guard view has no console errors. All GLBs validate with zero errors (normal-map tangent warnings are recorded in the asset audit). Touch button logic exists, but real-device multi-touch and native pointer lock remain unverified. Player HUD now reports the human's catches instead of aggregating every simulated visitor's catches.
+
+## Two-role playtest and gallery entrances
+
+In the browser, the Renaissance runner started entering the first cabinet during the opening sweep, accumulated four catches and timed out. The night guard used movement and several exposure bursts and finished with one capture. The opening patrol now starts at 3.1 seconds and a cabinet entry takes 0.72 seconds. A follow-up Impressionist run reached the sheltered state at the first cabinet with zero catches. These observations come from a single tester.
+
+Renaissance accepts either corner. Impressionist takes the near corner as the runner approaches. Modern requires passing the center to enter at the far corner. Sculpture alternates near and far entrances along the route. The control hint identifies the next entrance. Active flashlight contact shows a percentage on the reticle. Automated coverage checks both approaches at all four cabinets in all four galleries.
