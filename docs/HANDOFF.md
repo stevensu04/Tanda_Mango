@@ -45,3 +45,6 @@ See [Night Watch detail pass](NIGHT-WATCH-PLAN.md#detail-pass--21-november-2026)
 
 ### Reference-led v3 hand, superseding v2 study
 The corrected `watch-grip-v3.png` reference was generated and inspected first, then sent through the user's direct Meshy image-to-3D API. Primary runtime viewmodel is now `props/watchGripV3.glb`, with lens calibration in `detailed-grip.js`. Cost: 30 credits for this task. V2 remains a rejected collection study. V3 is a static held pose, not independently animated fingers. Added parquet, panel mouldings, thresholds, warm fixture pools, dim environment reflections and shaped flashlight falloff; paintings now respond to light. See latest plan for acceptance evidence and remaining hardware checks.
+
+### Cover gameplay and Git delivery
+User authorized commits and pushes. Checkpoints `54d8f1b` (playable museum) and `93b0657` (guard movement/furniture) were pushed to main. The next cover change adds four Meshy oak cabinets, C/touch cover entry, collision-free approach/exit, ray-based occlusion and flanking vulnerability. Cover preserves the existing frame checkpoint rather than replacing it. Guard-mode visitors occasionally use cover. Backend team must review this local extension; no server protocol or deployment is included.

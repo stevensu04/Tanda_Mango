@@ -8,7 +8,7 @@ npm run build
 npm run dev
 ```
 
-Open http://127.0.0.1:5186. Hold RUN / right arrow to move; release on gold near a frame to hide. BACK / left arrow retreats. A round lasts 45 seconds. Guard mode is freely moving first-person: WASD moves, mouse aims, hold left mouse to expose. Esc pauses. Use right-drag aiming if mouse capture is unavailable. Explore the museum opens an untimed venue walkthrough. Escaping players retain third-person follow. Projection mode is available from the lobby.
+Open http://127.0.0.1:5186. Hold RUN / right arrow to move; release on gold near a frame to hide. BACK / left arrow retreats. Near a carved cabinet, press C / TAKE COVER to walk behind it; RUN leaves cover. Cabinets block sight but do not save progress, and guards can flank them. A round lasts 45 seconds. Guard mode is freely moving first-person: WASD moves, mouse aims, hold left mouse to expose. Esc pauses. Use right-drag aiming if mouse capture is unavailable. Explore the museum opens an untimed venue walkthrough. Escaping players retain third-person follow. Projection mode is available from the lobby.
 
 - [English source plan](docs/frame-escape-plan.en.md)
 - [Design review](docs/DESIGN-REVIEW.md)
@@ -21,4 +21,4 @@ Open http://127.0.0.1:5186. Hold RUN / right arrow to move; release on gold near
 
 Verification: `npm test`, `node scripts/audit-assets.mjs`, `npm run build`.
 
-Secrets belong only in local `.env`. Neither the static server nor build includes it. No commit, push or deployment is part of this delivery.
+Secrets belong only in local `.env`. Neither the static server nor build includes it. Current work is committed and pushed at the user’s request. Deployment remains separate.

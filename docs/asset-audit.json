@@ -866,6 +866,31 @@
     ]
   },
   {
+    "file": "web/assets/models/props/museumCover.glb",
+    "bytes": 849732,
+    "triangles": 8732,
+    "skins": 0,
+    "joints": [],
+    "animations": [],
+    "images": 3,
+    "errors": 0,
+    "warnings": 1,
+    "messages": [
+      {
+        "code": "NODE_MATRIX_DEFAULT",
+        "message": "Do not specify default transform matrix.",
+        "severity": 2,
+        "pointer": "/nodes/0/matrix"
+      },
+      {
+        "code": "MESH_PRIMITIVE_GENERATED_TANGENT_SPACE",
+        "message": "Material requires a tangent space but the mesh primitive does not provide it. Runtime-generated tangent space may be non-portable across implementations.",
+        "severity": 1,
+        "pointer": "/meshes/0/primitives/0/material"
+      }
+    ]
+  },
+  {
     "file": "web/assets/models/props/owl.glb",
     "bytes": 301424,
     "triangles": 4745,
