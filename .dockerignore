@@ -1,0 +1,12 @@
+**/node_modules
+dist
+web/vendor
+output
+artifacts
+.env
+.env.*
+.git
+.claude
+docs
+tests
+**/*.md

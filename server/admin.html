@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin · FRAME / ESCAPE</title>
+    <style>
+      :root { color-scheme: dark; --bg: #102c2b; --panel: #163a38; --text: #f1e8d4; --muted: #b9c7bd; --gold: #e2b866; }
+      body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+      main { max-width: 520px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 12px; }
+      h1 { font: 700 26px Georgia, serif; margin: 0 0 4px; }
+      button { padding: 16px; border-radius: 10px; border: 1px solid #ffffff22; background: var(--panel); color: var(--text); font: 700 17px system-ui; cursor: pointer; }
+      button.primary { background: var(--gold); color: #1c1a12; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      pre { background: #0b2120; padding: 12px; border-radius: 10px; font-size: 13px; overflow-x: auto; white-space: pre-wrap; }
+      .muted { color: var(--muted); font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>FRAME / ESCAPE · Admin</h1>
+      <div class="muted" id="conn">Connecting…</div>
+      <button class="primary" data-cmd="start">▶ Start round now</button>
+      <button data-cmd="reset">↺ Back to lobby (resets the round)</button>
+      <div class="row"><button data-cmd="manual">Manual mode</button><button data-cmd="auto">Auto-loop mode</button></div>
+      <pre id="stats">…</pre>
+      <p class="muted">Manual: the lobby waits for “Start”. Auto: a round starts 10 s after someone joins, and keeps looping.</p>
+    </main>
+    <script type="module">
+      import { io } from '/socket.io/socket.io.esm.min.js';
+      const key = new URLSearchParams(location.search).get('key') ?? '';
+      const socket = io({ auth: { role: 'admin', key } });
+      const conn = document.getElementById('conn');
+      socket.on('connect', () => (conn.textContent = 'Connected'));
+      socket.on('disconnect', () => (conn.textContent = 'Disconnected'));
+      socket.on('m', (m) => { if (m.t === 'error') conn.textContent = 'Wrong or missing ?key='; });
+      document.querySelectorAll('[data-cmd]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const c = b.dataset.cmd;
+          socket.emit('m', c === 'manual' || c === 'auto' ? { t: 'mode', mode: c } : { t: c });
+        }),
+      );
+      const stats = document.getElementById('stats');
+      setInterval(async () => {
+        try {
+          const s = await (await fetch('/stats')).json();
+          const g = s.galleries.map((x) => `  ${x.name.padEnd(30)} ${String(x.people).padStart(3)} people  ${x.ghosts} ghosts  t=${x.t}s  caught ${x.catches}`).join('\n');
+          stats.textContent = `phase ${s.phase} · mode ${s.mode}${s.endsInMs != null ? ` · ${Math.ceil(s.endsInMs / 1000)}s left` : ''}\nconnected ${s.connected}${s.guard ? ` · guard in ${s.guard.gallery} (${s.guard.catches} caught)` : ''}\n${g}`;
+        } catch {}
+      }, 1000);
+    </script>
+  </body>
+</html>
