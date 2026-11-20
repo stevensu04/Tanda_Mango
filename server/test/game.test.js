@@ -72,6 +72,15 @@ test('auto mode: lobby waits for someone, then countdown → play → results af
   assert.equal(game.phase, 'lobby');
 });
 
+test('auto mode: a judge alone on the guard page also starts rounds', () => {
+  const { game, run } = setup();
+  run(3000);
+  assert.equal(game.phase, 'lobby');
+  game.guardConnected();
+  run(1100);
+  assert.equal(game.phase, 'countdown');
+});
+
 test('manual mode waits for the admin', () => {
   const { game, run } = setup({ mode: 'manual' });
   game.welcome(game.join(0, 'fox'));

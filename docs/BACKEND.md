@@ -47,7 +47,9 @@ The guard's browser sends its beam (`origin`, `direction`, `exposing`) about 15�
 - `npm test` at the repo root: **33 pass** (Wesley's 21 + 12 server tests: galleries and overflow, lifecycle, manual mode, keep-alive, saving, beam catch with line of sight, beam speed clamp, cover, podiums without ghosts, reconnect, wire format).
 - Load test, 200 real Socket.IO players for 70 s: **0 drops, 0 errors**, snapshots every ~102 ms (max 169 ms), 8 galleries of 25. About **2 MB/s total to all phones (~10 KB/s per phone)**: test this on the venue Wi-Fi.
 - In the browser: Wesley's lobby → Renaissance Room live, reconnect after reload, running with the keyboard, no console errors.
-- Not yet checked: real phones on Wi-Fi, the human guard end to end in a browser, the projection monitor live, Docker build (Docker Hub timed out locally).
+- **Human guard, live** (`?key=guard`, drag controls, Space to expose): the server drains the battery from the guard's beam, CONTACT rose 13 → 83 %, the server recorded 2 catches by the guard and the guard HUD showed "2 CAUGHT". Guard tab reconnects by itself after a server restart. A judge alone on the guard page now starts the auto loop (before, rounds waited for a player).
+- **Projection monitor, live**: all 4 galleries on the shared clock; escapes and catches match `/stats` exactly; switching the monitored gallery works; no console errors.
+- Not yet checked: real phones on Wi-Fi, native pointer lock on the guard, Docker build (Docker Hub timed out locally).
 
 ## For Wesley — small frontend follow-ups
 
@@ -57,6 +59,7 @@ The guard's browser sends its beam (`origin`, `direction`, `exposing`) about 15�
 4. **"LOCAL REHEARSAL" label**: show LIVE when `transport.live` is true.
 5. **Overflow galleries** ("· B") aren't in the 4-room monitor. Either raise `ROOM_MAX` (200 people ÷ 4 = 50 per gallery) or show them.
 6. `transport.addEventListener('offline', …)` fires if the guard key is rejected and the page drops to the local rehearsal.
+7. **After every round, everyone (players, guard, projector) lands on the results screen and must press Play again** to be in the next round; the guard must also take control again. For the live demo, consider going back to play automatically when `room.phase` turns `lobby`/`countdown` after results.
 
 ## Deploy
 

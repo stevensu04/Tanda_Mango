@@ -286,9 +286,11 @@ export class Game {
     // 'play' ends when every gallery's own 45 s clock runs out (endRound).
   }
 
+  /** Auto mode loops once anyone is here to play: a connected player, or a judge on the guard page alone. */
   lobbyDeadline(now) {
     if (this.mode === 'manual') return 0;
-    return [...this.seats.values()].some((s) => s.connected) ? now + this.lobbyMs : 0;
+    const someone = this.guard.sockets > 0 || [...this.seats.values()].some((s) => s.connected);
+    return someone ? now + this.lobbyMs : 0;
   }
 
   endRound(now) {
