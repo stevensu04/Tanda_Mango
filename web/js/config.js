@@ -1,0 +1,4 @@
+// v3 proposal from docs/frame-escape-plan.en.md. Backend owns final shared config.
+export const CONFIG = Object.freeze({duration:45,frames:[0,1,4,5,7,8,11,12.5],exit:15.5,safeRadius:.25,snapRadius:.4,speed:1,warning:1,grace:.15,freeze:1,maxCharges:2,recharge:2.5});
+export const ROOMS=['The Renaissance Room','The Impressionist Room','The Modern Wing','The Sculpture Court'];
+export const CAST={fox:{title:'The Midnight Fox',name:'Amber Fox',color:0xdba45c,detail:'Oil, mischief & a very good escape plan.'},rabbit:{title:'The Velvet Rabbit',name:'Violet Rabbit',color:0xb692c8,detail:'A noble portrait with somewhere else to be.'},bear:{title:'The Wandering Scholar',name:'Sage Bear',color:0x92ad83,detail:'A little wisdom. A rather large head start.'},guard:{title:'The Night Watchman',name:'The Night Watchman',color:0x8199ac,detail:'He was told the paintings never move.'}};

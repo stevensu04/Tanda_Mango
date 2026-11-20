@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {makeRoom,setInput,tick,target,isSafe,inGap,rankHumans} from '../web/js/rehearsal.js';
+const advance=(r,t)=>{for(let x=0;x<t;x+=.01)tick(r,.01,{autoGuard:false});};
+test('passing a frame saves even while moving',()=>{const r=makeRoom();setInput(r,1);advance(r,1.5);assert.equal(r.players[0].saved,1);});
+test('release snaps within .4 but not outside it',()=>{const r=makeRoom();r.players[0].x=1.36;setInput(r,0);assert.equal(r.players[0].x,1);r.players[0].x=1.42;setInput(r,0);assert.equal(r.players[0].x,1.42);});
+test('safe zone boundaries never belong to a lit gap',()=>{assert(isSafe(1.25));assert(!inGap(1.25,1));assert(inGap(1.26,1));});
+test('flash judges once after grace and restores saved frame',()=>{const r=makeRoom();r.players[0].x=2.5;r.players[0].saved=1;assert(target(r,1));advance(r,1.05);assert.equal(r.players[0].caught,0);advance(r,.12);assert.equal(r.players[0].caught,1);assert.equal(r.players[0].x,1);advance(r,.3);assert.equal(r.players[0].caught,1);});
+test('charge gate and single light are enforced',()=>{const r=makeRoom();assert(target(r,1));assert(!target(r,2));assert.equal(r.charges,1);advance(r,1.6);assert(target(r,2));assert.equal(r.charges,0);});
+test('bots cannot rank even when they escape first',()=>{const r=makeRoom();r.players[1].escapedAt=1;assert.deepEqual(rankHumans(r.players).map(p=>p.id),['0-0']);});
+test('escaped players cannot be caught and round ends at 45',()=>{const r=makeRoom();r.players[0].x=15.49;setInput(r,1);advance(r,.1);assert(r.players[0].escapedAt!==null);advance(r,46);assert.equal(r.t,45);assert(r.ended);});

@@ -1,0 +1,5 @@
+import {readFile,readdir,writeFile} from 'node:fs/promises';
+import {validateBytes} from 'gltf-validator';
+const report=[];
+for(const dir of ['web/assets/models','web/assets/models/props'])for(const file of await readdir(dir)){if(!file.endsWith('.glb'))continue;const path=dir+'/'+file,b=await readFile(path);const j=JSON.parse(b.subarray(20,20+b.readUInt32LE(12)));const result=await validateBytes(new Uint8Array(b),{uri:file,maxIssues:30});const triangles=(j.meshes||[]).reduce((sum,m)=>sum+m.primitives.reduce((s,p)=>s+(p.indices!==undefined?j.accessors[p.indices].count:j.accessors[p.attributes.POSITION].count)/3,0),0);report.push({file:path,bytes:b.length,triangles,skins:(j.skins||[]).length,joints:(j.skins||[]).map(s=>s.joints.length),animations:(j.animations||[]).map(a=>a.name),images:(j.images||[]).length,errors:result.issues.numErrors,warnings:result.issues.numWarnings,messages:result.issues.messages});console.log(file,JSON.stringify(report.at(-1)));}
+await writeFile('docs/asset-audit.json',JSON.stringify(report,null,2));if(report.some(r=>r.errors))process.exitCode=1;

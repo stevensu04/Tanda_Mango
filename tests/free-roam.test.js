@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {inVenue,moveGuard,lineBlocked,insideBeam} from '../web/js/venue.js';
+import {makeRoom,updateExposure} from '../web/js/rehearsal.js';
+test('guard cannot tunnel through walls or display bases, and can enter side gallery',()=>{const p={x:5,z:0};moveGuard(p,0,20);assert.ok(p.z<4.1);assert.ok(inVenue(p.x,p.z));const q={x:15.5,z:2};moveGuard(q,0,5);assert.ok(q.z>6.5);const d={x:15.5,z:7};moveGuard(d,0,6);assert.ok(d.z<8.3);});
+test('walls occlude a beam, open doorways transmit it; actors are not blockers',()=>{assert.equal(lineBlocked({x:10,y:1.3,z:2},{x:10,y:1.3,z:7}),true);assert.equal(lineBlocked({x:15.5,y:1.3,z:2},{x:15.5,y:1.3,z:7}),false);assert.equal(insideBeam({x:4,y:1,z:.5},{x:1,y:0,z:0},{x:10,y:1,z:.5}),true);assert.equal(insideBeam({x:4,y:1,z:.5},{x:1,y:0,z:0},{x:18,y:1,z:.5}),false);assert.equal(insideBeam({x:4,y:1,z:.5},{x:1,y:0,z:0},{x:8,y:1,z:2.5}),false);});
+function fixture(){const r=makeRoom();r.players=[{...r.players[0],x:2,saved:1,bot:false,exposure:0}];return r;}
+const beam={origin:{x:4,y:1.1,z:.65},direction:{x:1,y:0,z:0},exposing:true};
+test('capture needs 1.15 seconds exposure; safe bands and release decay protect players',()=>{const r=fixture();for(let i=0;i<20;i++)updateExposure(r,.05,beam);assert.equal(r.catches,0);for(let i=0;i<4;i++)updateExposure(r,.05,beam);assert.equal(r.catches,1);assert.equal(r.players[0].x,1);assert.equal(r.players[0].freeze,1);const safe=fixture();safe.players[0].x=4;for(let i=0;i<30;i++)updateExposure(safe,.05,beam);assert.equal(safe.catches,0);const decay=fixture();updateExposure(decay,.5,beam);updateExposure(decay,.25,{...beam,exposing:false});assert.equal(decay.players[0].exposure,0);});
+test('battery cannot flicker back on while trigger remains held; recharge requires release',()=>{const r=fixture();r.charges=.01;updateExposure(r,.05,beam);assert.equal(r.charges,0);updateExposure(r,.1,beam);assert.equal(r.charges,0);assert.equal(r.light,null);updateExposure(r,.25,{...beam,exposing:false});assert.equal(r.charges,.1);});
