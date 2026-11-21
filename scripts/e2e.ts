@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 
 process.env.BOUNCER_AI = process.env.BOUNCER_AI || 'mock';
+process.env.OPEN_ROOMS = process.env.OPEN_ROOMS || '1'; // projectors may open rooms without the host console (test mode)
 process.env.GAME_SPEED = process.env.GAME_SPEED || '3';
 const SPEED = Number(process.env.GAME_SPEED);
 const PORT = 5181;

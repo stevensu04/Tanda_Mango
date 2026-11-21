@@ -116,6 +116,31 @@ A 90-second round (set it on the host page) works the same way; the rush starts 
 | `npm run load` | 100 simulated phones play a full round |
 | `npm run eval:bouncer` | Checks Claude's lines against about 20 scenarios (real API, about half a cent) |
 
+## Ten-player linked playtest
+
+One projector and ten independent Chrome phone sessions played a 120-second round on build `3520a6e` with simulated player inputs and mocked Gus dialogue. The room was recreated after the first rule draw omitted Moonwalk.
+
+**NOT A COP 2 won the crown with 70 points.** NOT A COP entered first at 27 seconds and earned 100 points. At the final vote, all nine eligible challengers backed the coup. Five votes were enough to depose the owner. Among those who voted for the coup, NOT A COP 2 had entered earliest and therefore inherited the crown. The projector and all ten phones agreed on the winner. The former owner finished second.
+
+**Moonwalk reached all nine outside players.** When NOT A COP selected it, all nine were holding Sneak. Each phone’s main button changed to **LET GO / TO MOVE**, and the projector displayed **RELEASE TO MOVE**. A first-time human playtest is still needed to measure how many people release without coaching.
+
+### Who benefits from a Lounge power?
+
+Any admitted player can use these powers. The owner activated all three in this round.
+
+| Power | Who it affects | What happened in the round |
+| --- | --- | --- |
+| Banana | Hinders one randomly selected runner outside. A hit moves them back by 10% of the course. | NOT A COP hit DJ OYSTER. |
+| Distract | Helps the runners outside by distracting Gus for one second. | The owner triggered the distraction while players were approaching the rope. |
+| Snitch | Helps Gus by extending his next watch by one second. Runners outside must stay frozen longer. | The owner triggered it after Distract. The effect applied to the next watch. |
+
+### Improvements to try with ten people
+
+- **Help each player find their avatar.** The phone marked the player with **YOU**, but the lobby list showed five names and **+5 MORE**. Several avatars had overlapping labels, including NOT A COP, NOT A COP 2 and NOT A COP 3. Try two columns of five and a short player number shared by phone, avatar and results. Ask each player to point out their avatar before the host starts.
+- **Skip the empty-street wait.** Nine players had entered by 46 seconds and the tenth by 72. The scheduled rush began at 105 seconds, leaving 33 seconds with nobody outside to target, followed by a rope contest with nobody attacking. Try opening the crown vote as soon as everyone is inside.
+- **Show whom a vote helps before the tap.** Nine people voted for a coup that crowned just one of them. Show the projected successor for that player’s vote on their phone, for example **CROWN NOT A COP 2**, alongside **KEEP NOT A COP**. Update the candidate if an earlier entrant joins the coup. Ask each player whom their tap would put on the throne.
+- **Show the outcome of interference.** Label the actions **Trip a runner**, **Help the runners** and **Help Gus**. After a banana hit, tell the sender **You tripped DJ OYSTER** and tell the target **NOT A COP tripped you**.
+
 ## More detail
 
 - [plan.md](./plan.md): game design and build plan

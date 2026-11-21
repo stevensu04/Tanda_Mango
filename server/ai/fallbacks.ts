@@ -90,6 +90,7 @@ export const LINES = {
   snitch: '{B} SNITCHED. GUS WILL LOOK LONGER.',
   noWinner: 'NOBODY GOT IN. GUS WINS AGAIN.',
   kept: '{N} KEPT THE CROWN. TONIGHT\'S VIP.',
+  allIn: 'EVERYONE\'S IN. TIME TO VOTE.',
   took: '{N} TOOK THE CROWN FROM {P}. LONG LIVE {N}.',
   soloClear: '{L} CLEARED. NEXT DOOR.',
   soloBeaten: 'AREA 51 BREACHED. BOUNCER BEATEN.',

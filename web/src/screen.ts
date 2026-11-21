@@ -1,10 +1,13 @@
+import { tagText } from '../../shared/text';
 import QRCode from 'qrcode';
 import { C } from './pix/palette';
 import { Screen, rect, dither, frame, textBox, meter, blit, nameTab, sprite } from './pix/pix';
 import { drawText, drawTextCentered, drawTextOutlined, textWidth, wrap } from './pix/font';
 import { lookFromSeed, drawPlayer, icon, gusSprite, type PlayerLook, type PlayerFrame, type GusPose } from './pix/sprites';
 import { drawStreet, drawRope, drawGus, drawSightline, drawDarkness, drawCat, L } from './pix/scene';
-import { sfx, unlock, setMuted } from './pix/sfx';
+import { sfx, unlock, setMuted, getLevel, masterOut, audio } from './pix/sfx';
+import { startClub, setScene, setAjar, doorOpen, duck, sting, hum, stopHum, audition, gusBusyFor, loadAudition, _debug as clubDebug } from './club-audio';
+import { mountPanel, wakeAudio, testSound, stopPreview, previewMarks } from './sound-panel';
 import { devbar } from './devbar';
 import { NAMES, LINES, HUD, TICKER, RESULTS, CHAOS } from './mock';
 import { connect } from './net';
@@ -497,7 +500,41 @@ function drawAuto(dt: number): GusPose {
 interface LP { look: PlayerLook; seed: number; x: number; flingT: number; flingFrom: number; enterT: number; seenAt: number; bananaT: number; slipT: number }
 const lp = new Map<string, LP>();
 let snap: Snapshot | null = null;
-(window as unknown as { __club: unknown }).__club = { snap: () => snap };
+const evLog: { kind: string; name?: string; clock: number; phase: string }[] = [];
+/** Host key presses the projector page actually received (for the start-path test). */
+const keyLog: { key: string; phase: string | null; startSent: boolean; focus: string }[] = [];
+const describeFocus = () => { const a = document.activeElement as HTMLElement | null; return a ? `${a.tagName.toLowerCase()}${a.id ? '#' + a.id : ''}` : 'none'; };
+// read-only hook for the browser tests: the latest snapshot, and every game event with the round clock it arrived at
+(window as unknown as { __club: unknown }).__club = {
+  snap: () => snap,
+  log: () => evLog,
+  keys: () => keyLog,
+  focus: () => describeFocus(),
+  audio: () => ({ ...clubDebug(), state: audio()?.state ?? 'none' }),
+  testSound: () => testSound(),
+  previewMarks: () => previewMarks,
+  stopPreview: () => stopPreview(),
+  /** Record what the projector's mixer actually outputs (for the acceptance sound sample). */
+  async record(ms: number): Promise<string> {
+    const a = audio(), m = masterOut();
+    if (!a || !m) return '';
+    const dest = a.createMediaStreamDestination();
+    m.connect(dest);
+    const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm;codecs=opus' });
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    const done = new Promise<void>((r) => { rec.onstop = () => r(); });
+    rec.start();
+    await new Promise((r) => setTimeout(r, ms));
+    rec.stop();
+    await done;
+    m.disconnect(dest);
+    const buf = new Uint8Array(await new Blob(chunks, { type: 'audio/webm' }).arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  },
+};
 let netUp = false;
 let lastPhase: RoundPhase | null = null;
 let pointT = 0;
@@ -507,7 +544,6 @@ let roomCode = (params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, ''
 let lineWho = 'GUS';
 let gotSayEvent = false;
 let page = 0, pageShown = 0, pageWait = 0;
-let beatIdx = -1;
 let muted = false;
 const LIVE_LANES = [98, 112, 126, 140];
 const BANANA = sprite('banana', ['....kk..', '...kyk..', '..kyyk..', '.kyyk...', 'kyyk....', 'kyyyk...', '.kyyyykk', '..kkkk..'], { k: C.INK, y: C.LAMP, w: C.PAPER });
@@ -516,8 +552,24 @@ const stare = Array.from({ length: STARE_MAX }, () => ({ name: '', x: 0, lane: 0
 let stareN = 0;
 const flyers = Array.from({ length: 8 }, () => ({ x: 0, y: 0 }));
 let bananaN = 0;
+let revealAt = -1;
+/** A named Lounge-power callout ("NOT A COP TRIPPED DJ OYSTER"), placed clear of Gus and his warning. */
+let callout: { power: string; byTag: number; by: string; targetTag: number; target: string | null; until: number } | null = null;
 
+let denied: 'no-room' | 'waiting' | null = null;
+let canControl = true;   // projector keys S/R work only in open (test) mode; normally the host dashboard runs the room
 const net = LIVE ? connect(() => (roomCode ? { t: 'hello', role: 'screen', room: roomCode } : { t: 'hello', role: 'screen' }), onServer, (up) => { netUp = up; }) : null;
+// "Waiting for a room": a code field over the canvas
+const codeBox = document.createElement('form');
+codeBox.innerHTML = `<input id="roomInput" maxlength="4" placeholder="ROOM CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">Show room</button>`;
+codeBox.style.cssText = 'position:fixed;left:50%;top:62%;transform:translateX(-50%);z-index:12;display:none;gap:8px;font:20px ClubPixelCJK,monospace';
+for (const el of Array.from(codeBox.children) as HTMLElement[]) el.style.cssText = `font:inherit;text-transform:uppercase;padding:8px 12px;border:3px solid ${C.INK};background:${C.PAPER};color:${C.INK};border-radius:0`;
+document.body.appendChild(codeBox);
+codeBox.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = (document.getElementById('roomInput') as HTMLInputElement).value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  if (v.length === 4) { const u = new URL(location.href); u.searchParams.set('room', v); location.href = u.toString(); }
+});
 
 function liveLane(i: number) { return LIVE_LANES[i % LIVE_LANES.length] - Math.floor(i / LIVE_LANES.length) * 6; }
 function toPx(x01: number) { return L.START_X + x01 * (L.ROPE_X - 10 - L.START_X); }
@@ -538,7 +590,7 @@ function speakNext() {
   if (!synth || pending === null) return;
   const text = pending; pending = null;
   const u = new SpeechSynthesisUtterance(text.toLowerCase());
-  u.pitch = 0.4; u.rate = 0.95; u.volume = 1;
+  u.pitch = 0.4; u.rate = 0.95; u.volume = Math.max(0, Math.min(1, getLevel('gus') * getLevel('master')));
   const v = pickVoice();
   if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
   u.onend = u.onerror = () => { if (utter === u) utter = null; speakNext(); };
@@ -548,6 +600,8 @@ function speakNext() {
 function speak(text: string) {
   if (!synth || muted) return;
   pending = text; // one slot: a newer line replaces an older pending one
+  const busy = gusBusyFor(); // Gus is humming or saying his audition line: never talk over himself
+  if (busy > 0) { setTimeout(() => { if (!utter && !synth.speaking) speakNext(); }, busy * 1000 + 150); return; }
   if (!utter && !synth.speaking) speakNext();
 }
 function setMute(m: boolean) {
@@ -565,7 +619,10 @@ function vis(p: PubPlayer): LP {
 }
 
 function onServer(m: ServerMsg) {
+  if (m.t === 'denied') { denied = m.reason; return; }
   if (m.t === 'room') {
+    denied = null;
+    canControl = m.control !== false;
     roomCode = m.code;
     const u = new URL(location.href);
     if (u.searchParams.get('room') !== m.code) { u.searchParams.set('room', m.code); history.replaceState(null, '', u.toString()); }
@@ -581,10 +638,11 @@ function onServer(m: ServerMsg) {
     return;
   }
   if (m.t !== 'ev') return;
+  if (m.kind !== 'say' && snap) evLog.push({ kind: m.kind, name: 'name' in m ? m.name : 'by' in m ? m.by : undefined, clock: snap.phase === 'vote' ? -1 : snap.roundSecs - snap.timeLeft, phase: snap.phase });
   switch (m.kind) {
     case 'say': gotSayEvent = true; sayLive(m.text, m.who); if (m.speak) speak(m.text); break;
-    case 'tell': sfx.tell(); break;
-    case 'turn': sfx.turn(); shake = 0.12; break;
+    case 'tell': stopHum(); duck(true); sfx.tell(); break;   // he noticed: the hum stops, the room drops
+    case 'turn': duck(true); sfx.turn(); shake = 0.12; break;
     case 'fakeout': gusText = { text: '...NAH', color: C.PAPER, until: t + 0.8 }; break;
     case 'nap': showBanner('GUS FELL ASLEEP', 'GO GO GO', C.SAFE, 2.5); break;
     case 'caught': sfx.caught(); flashRed(); shake = 0.2; pointT = 0.8; break;
@@ -592,13 +650,16 @@ function onServer(m: ServerMsg) {
       const v = lp.get(m.id);
       if (v) { v.flingT = 0; v.flingFrom = v.x; }
       sfx.fling(); shake = 0.25;
+      maybeCuteShoes();
       break;
     }
-    case 'pass': sfx.pass(); break;
+    case 'pass': sfx.pass(); maybeCuteShoes(); break;
     case 'entered': {
       const v = lp.get(m.id);
       if (v) v.enterT = 0;
-      flash = 0.4; flashColor = C.LAMP; sfx.vip();
+      flash = 0.4; flashColor = C.LAMP;
+      // the clasp clicks, the door opens and the same beat comes through clear; the first one is the big moment
+      if (m.order === 1) doorOpen(3, true); else doorOpen(1.2, false);
       break;
     }
     case 'owner': showBanner('NEW OWNER', `${m.name} RUNS THE DOOR`, C.LAMP, 3.5); break;
@@ -608,38 +669,116 @@ function onServer(m: ServerMsg) {
       if (m.power === 'banana' && m.targetId) {
         const v = lp.get(m.targetId);
         if (v) { v.bananaT = 0; v.slipT = -1; }
-      } else if (m.power === 'distract') gusText = { text: 'DISTRACTED!', color: C.LAMP, until: t + 1.5 };
-      else if (m.power === 'snitch') gusText = { text: 'SNITCH!', color: C.ALERT, until: t + 1.5 };
+      }
+      callout = { power: m.power, byTag: m.byTag, by: m.by, targetTag: m.targetTag, target: m.target, until: t + 3 };
       break;
     }
+    case 'allin': showBanner("EVERYONE'S IN", 'TIME TO VOTE', C.LAMP, 3); flash = 0.4; flashColor = C.LAMP; sfx.vip(); break;
     case 'rope':
-      if (m.snapped) { showBanner('ROPE SNAPPED!', 'EVERYONE RUSHES IN  X1.5', C.SAFE, 2.5); flash = 0.4; flashColor = C.SAFE; shake = 0.3; sfx.fling(); }
+      if (m.snapped) { showBanner('ROPE SNAPPED!', 'EVERYONE RUSHES IN  X1.5', C.SAFE, 2.5); flash = 0.4; flashColor = C.SAFE; shake = 0.3; sfx.fling(); doorOpen(3, true); }
       else showBanner('ROPE HELD', 'THE LINE STAYS OUT', C.LAMP, 2.5);
       break;
   }
 }
 
 function onPhase(from: RoundPhase | null, m: Snapshot) {
+  // from === null: this screen just loaded (or was refreshed) mid-game. Pick the scene up where it is,
+  // but never replay one-off moments (door, hum, crowning).
+  const fresh = from === null;
+  // a round is starting (or moving on): no preview timers or lobby hum may spill into it
+  if (m.phase !== 'lobby') { stopPreview(); stopHum(); }
+  if (m.phase === 'lobby' || m.phase === 'play') { hummedThisRound = fresh && m.phase === 'play'; shoesThisRound = false; lobbySince = t; }
   switch (m.phase) {
-    case 'lobby': bannerMsg = null; gusText = null; break;
-    case 'play': sfx.turn(); break;
-    case 'push': sfx.nerd(); shake = 0.2; break;
-    case 'reveal': flash = 0.6; flashColor = C.LAMP; sfx.vip(); break;
+    case 'lobby': bannerMsg = null; gusText = null; callout = null; break;
+    case 'play': if (!fresh) sfx.turn(); break;
+    case 'push': if (!fresh) { sfx.nerd(); shake = 0.2; } break;
+    case 'reveal':
+      if (fresh) { revealAt = t - 60; break; } // straight to the scores
+      flash = 0.6; flashColor = C.LAMP; sting(); revealAt = t; break;
   }
-  void from;
 }
 
-function liveTag(text: string, x: number, lane: number, color: string, plate: string = C.INK, suffix?: [string, string]) {
-  const w = textWidth(text) + 4 + (suffix ? textWidth(suffix[0]) + 6 : 0);
+/** This screen has no room to show: rooms are created on the private host console. */
+function drawDenied() {
+  scr.fitFixed(host);
+  rect(ctx, 0, 0, L.W, L.H, C.NIGHT);
+  drawTextCentered(ctx, 'CLUB VELVET', L.W / 2, 40, C.NEON, 2);
+  drawTextCentered(ctx, denied === 'no-room' ? `NO ROOM ${roomCode} RIGHT NOW` : 'WAITING FOR A ROOM', L.W / 2, 70, C.PAPER, denied === 'no-room' ? 1 : 2);
+  drawTextCentered(ctx, 'HOST: CREATE A GAME ON /ADMIN.HTML,', L.W / 2, 92, C.STONE_HI);
+  drawTextCentered(ctx, 'THEN CLICK OPEN PROJECTOR OR TYPE THE CODE', L.W / 2, 102, C.STONE_HI);
+}
+
+// ---------- the room's sound, following the game ----------
+function logSound(kind: string) { if (snap) evLog.push({ kind, clock: snap.phase === 'vote' ? -1 : snap.roundSecs - snap.timeLeft, phase: snap.phase }); }
+let hummedThisRound = false;
+let shoesThisRound = false;
+let lobbySince = 0;
+let backSince = 0;
+let lastGusPose = '';
+/** "I saw that... Cute shoes, though." Only after a challenge ends, now and then, never over a line or a warning. */
+function maybeCuteShoes() {
+  if (shoesThisRound || !snap || snap.phase !== 'play' || snap.gus === 'tell' || snap.gus === 'watch') return;
+  if (synth?.speaking || utter || Math.random() > 0.35) return;
+  if (audition() > 0) { shoesThisRound = true; logSound('cute-shoes'); }
+}
+function soundDirector(s: Snapshot | null) {
+  if (!s) return;
+  const phase = s.phase;
+  setScene(phase === 'vote' ? 'vote' : 'street');
+  setAjar(phase === 'play' && s.rule === 'disco');
+  const turning = phase === 'play' && (s.gus === 'tell' || s.gus === 'watch');
+  duck(turning);
+  if (s.gus !== lastGusPose) { lastGusPose = s.gus; if (s.gus === 'back') backSince = t; }
+  // Gus hums the hook at most once a round, in a safe gap: no warning, banner, callout or line going
+  const quiet = !synth?.speaking && !utter && (!bannerMsg || t > bannerMsg.until) && (!callout || t > callout.until);
+  if (hummedThisRound || !quiet) return;
+  const firstInYet = s.players.some((p) => p.state === 'lounge');
+  const lobbyGap = phase === 'lobby' && t - lobbySince > 12 && s.players.some((p) => !p.npc);
+  const playGap = phase === 'play' && !firstInYet && s.gus === 'back' && t - backSince > 0.8 && s.roundSecs - s.timeLeft > 6;
+  if (lobbyGap || playGap) { hummedThisRound = true; hum(true); logSound('hum'); }
+}
+
+/** Player number badge: the same number the phone shows ("YOU ARE 7") and the results list. */
+function badgeW(n: number) { return textWidth(tagText(n)) + 4; }
+function badge(n: number, x: number, y: number) {
+  if (!n) return 0;
+  const w = badgeW(n);
+  rect(ctx, x, y, w, 9, C.INK);
+  rect(ctx, x + 1, y + 1, w - 2, 7, C.LAMP);
+  drawText(ctx, tagText(n), x + 2, y + 1, C.INK);
+  return w;
+}
+/** Badge then name; returns the width drawn. */
+function badgeName(n: number, name: string, x: number, y: number, color: string) {
+  const bw = n ? badge(n, x, y - 1) + 3 : 0;
+  drawText(ctx, name, x + bw, y, color);
+  return bw + textWidth(name);
+}
+function badgeNameW(n: number, name: string) { return (n ? badgeW(n) + 3 : 0) + textWidth(name); }
+
+/** Street label: just the number above the head (ten names would pile up), NPCs get a grey NPC chip. */
+function headBadge(p: PubPlayer, x: number, lane: number) {
+  const y = lane - 26;
+  if (p.npc) { const w = textWidth('NPC') + 4; rect(ctx, Math.round(x - w / 2), y, w, 9, C.INK); drawText(ctx, 'NPC', Math.round(x - w / 2) + 2, y + 1, C.STONE); return; }
+  badge(p.tag, Math.round(x - badgeW(p.tag) / 2), y);
+}
+
+function liveTag(text: string, x: number, lane: number, color: string, plate: string = C.INK, suffix?: [string, string], tag = 0) {
+  const bw = tag ? badgeW(tag) + 2 : 0;
+  const w = bw + textWidth(text) + 4 + (suffix ? textWidth(suffix[0]) + 6 : 0);
   let tx = Math.round(x + 9);
   if (tx + w > L.ROPE_X - 2) tx = Math.round(x - 9 - w);
   const ty = lane - 13;
   rect(ctx, tx, ty, w, 9, plate);
-  drawText(ctx, text, tx + 2, ty + 1, color);
-  if (suffix) drawText(ctx, suffix[0], tx + 4 + textWidth(text) + 4, ty + 1, suffix[1]);
+  if (tag) badge(tag, tx, ty);
+  drawText(ctx, text, tx + bw + 2, ty + 1, color);
+  if (suffix) drawText(ctx, suffix[0], tx + bw + 4 + textWidth(text) + 4, ty + 1, suffix[1]);
 }
 
 function drawLiveScreen(dt: number) {
+  codeBox.style.display = denied ? 'flex' : 'none';
+  if (denied) { drawDenied(); return; }
+  soundDirector(snap);
   scr.fitFixed(host);
   rect(ctx, 0, 0, L.W, L.H, C.INK); // clear: no flash or shake residue in the gaps
   const s = snap;
@@ -659,10 +798,7 @@ function drawLiveScreen(dt: number) {
   drawCat(ctx, t);
 
   // disco beat: 8th notes at 120 bpm while the rule is live
-  if (disco) {
-    const bi = Math.floor(t * 4);
-    if (bi !== beatIdx) { beatIdx = bi; sfx.beat(bi); }
-  } else beatIdx = -1;
+  // (Disco Mode props the club door ajar: see soundDirector)
 
   let gus: GusPose = 'back';
   if (phase === 'lobby') gus = 'watch';
@@ -682,7 +818,7 @@ function drawLiveScreen(dt: number) {
       v.x = L.START_X + 4 + (i % 3) * 22 + Math.floor(i / 3) * 8;
       if (t - v.seenAt < 0.3) blit(ctx, icon.puff(), v.x - 4, lane - 12);
       drawPlayer(ctx, v.look, Math.floor(t * 2 + i) % 5 === 0 ? 'cheer' : 'stand', v.x, lane);
-      liveTag(p.name, v.x, lane, p.npc ? C.STONE_HI : C.PAPER, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
+      headBadge(p, v.x, lane);
       continue;
     }
     if (p.state === 'lounge') {
@@ -718,7 +854,7 @@ function drawLiveScreen(dt: number) {
     if (p.caught) {
       spotlight({ x: v.x, lane } as P, C.ALERT);
       drawPlayer(ctx, v.look, Math.floor(t * 8) % 2 ? 'cheer' : 'caught', v.x, lane);
-      liveTag(p.name, v.x, lane, C.PAPER, C.ALERT, ['CAUGHT', C.INK]);
+      liveTag(p.name, v.x, lane, C.PAPER, C.ALERT, ['CAUGHT', C.INK], p.tag);
       if (stareN < STARE_MAX) {
         const e = stare[stareN++];
         e.name = p.name; e.x = v.x; e.lane = lane; e.micro = p.micro; e.score = p.microScore; e.left = p.microLeft;
@@ -733,14 +869,16 @@ function drawLiveScreen(dt: number) {
         rect(ctx, bx - 11, lane - 20, 22, 1, C.ALERT); rect(ctx, bx - 11, lane + 2, 22, 1, C.ALERT);
         rect(ctx, bx - 11, lane - 20, 1, 23, C.ALERT); rect(ctx, bx + 10, lane - 20, 1, 23, C.ALERT);
       }
-      liveTag(p.name, v.x, lane, p.nerd ? C.ALERT : tagColor, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
+      if (slipping && !p.npc) liveTag(p.name, v.x, lane, C.PAPER, C.ALERT, ['TRIPPED', C.LAMP], p.tag);
+      else liveTag(p.name, v.x, lane, p.nerd ? C.ALERT : tagColor, C.INK, p.npc ? ['NPC', C.STONE] : undefined, p.tag);
       continue;
     }
     let fr: PlayerFrame = 'freeze';
     if (phase === 'push') fr = Math.floor(t * 10 + i) % 2 ? 'cheer' : 'stand';
     else if (p.moving) fr = moon ? (Math.floor(t * 6) % 2 ? 'stepA' : 'stepB') : (Math.floor(t * 8 + i) % 2 ? 'sneakA' : 'sneakB');
     drawPlayer(ctx, v.look, fr, v.x + (phase === 'push' ? (Math.floor(t * 12) % 2) : 0), lane, moon && p.moving);
-    liveTag(p.name, v.x, lane, tagColor, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
+    headBadge(p, v.x, lane);
+    void tagColor;
   }
 
   drawGus(ctx, gus, t);
@@ -763,9 +901,12 @@ function drawLiveScreen(dt: number) {
     liveVipPanel(lounge, s!);
     liveClock(s!);
   }
-  if (phase === 'play' && moon && (!bannerMsg || t > bannerMsg.until) && Math.floor(t * 2) % 2) drawTextOutlined(ctx, '<< RELEASE TO MOVE >>', 112, 70, C.NEON, C.INK);
+  const calloutUp = !!callout && t < callout.until && phase === 'play';
+  if (phase === 'play' && moon && !calloutUp && (!bannerMsg || t > bannerMsg.until) && Math.floor(t * 2) % 2) drawTextOutlined(ctx, '<< RELEASE TO MOVE >>', 112, 70, C.NEON, C.INK);
   if (phase === 'push') livePushMeter(s!);
   if (phase === 'vote') liveVotePanel(s!);
+  // under a rule banner (y 30..66) the callout drops below it; it never covers Gus or his "!"
+  if (calloutUp) drawCallout(!!bannerMsg && t < bannerMsg.until ? 70 : 60);
   if (gusText && t < gusText.until && phase !== 'reveal') {
     const x = Math.max(2, Math.min(L.W - 2 - textWidth(gusText.text), Math.round(L.GUS_X - textWidth(gusText.text) / 2)));
     drawTextOutlined(ctx, gusText.text, x, L.GUS_FEET - 51, gusText.color, C.INK);
@@ -863,43 +1004,81 @@ function drawStare(k: number) {
 }
 
 function liveLobbyPanel(players: PubPlayer[]) {
+  // QR on the right (Gus waits behind it until the doors open), the full line-up on the left
   const m = 2;
   const size = (qr.size + 4) * m;
-  const w = 124, x0 = 114, y0 = 26;
+  const w = Math.max(116, size + 12), x0 = L.W - w - 4, y0 = 4;
   const h = 4 + size + 3 + 9 + 3 + 16 + 7;
   frame(ctx, x0, y0, w, h);
   drawQR(x0 + Math.round((w - size) / 2) + 2 * m, y0 + 4 + 2 * m, m);
   drawTextCentered(ctx, 'SCAN TO GET IN LINE', x0 + w / 2, y0 + 4 + size + 3, C.INK);
   if (roomCode) drawTextCentered(ctx, `ROOM ${roomCode}`, x0 + w / 2, y0 + 4 + size + 15, C.VELVET, 2);
   else drawTextCentered(ctx, 'CONNECTING...', x0 + w / 2, y0 + 4 + size + 18, C.STONE);
-  const n = players.length;
-  const shownNames = players.slice(0, 5);
-  const ph = 26 + (shownNames.length ? shownNames.length * 9 + 2 : 0) + (n > 5 ? 9 : 0);
-  frame(ctx, 4, 4, 92, ph, C.NIGHT, C.SAFE);
-  drawText(ctx, 'IN LINE', 11, 10, C.SAFE);
-  drawText(ctx, `${String(n).padStart(3, '0')} ${n === 1 ? 'PERSON' : 'PEOPLE'}`, 11, 19, C.PAPER);
-  shownNames.forEach((p, i) => { drawText(ctx, `${i + 1}`, 11, 30 + i * 9, C.STONE_HI); drawText(ctx, p.name, 21, 30 + i * 9, p.npc ? C.STONE_HI : C.PAPER); });
-  if (n > 5) drawText(ctx, `+${n - 5} MORE`, 21, 30 + 5 * 9, C.STONE_HI);
-  if (n > 0 && Math.floor(t * 2) % 2) drawTextOutlined(ctx, 'HOST: PRESS S TO START', 100, 6, C.LAMP, C.INK);
+  const humans = players.filter((p) => !p.npc);
+  const n = humans.length;
+  const rows = Math.max(1, Math.min(5, Math.ceil(n / 2)));
+  const cols = n > 5 ? 2 : 1;
+  const perCol = cols === 2 ? Math.ceil(n / 2) : n;
+  const pw = cols === 2 ? 2 * 92 + 8 : 100;
+  const ph = 24 + Math.max(1, cols === 2 ? perCol : rows) * 10 + 2;
+  frame(ctx, 4, 4, pw, ph, C.NIGHT, C.SAFE);
+  drawText(ctx, 'IN LINE', 11, 9, C.SAFE);
+  drawText(ctx, `${String(n).padStart(3, '0')} ${n === 1 ? 'PERSON' : 'PEOPLE'}`, 56, 9, C.PAPER);
+  humans.slice(0, 12).forEach((p, i) => {
+    const col = cols === 2 ? Math.floor(i / perCol) : 0, row = cols === 2 ? i % perCol : i;
+    badgeName(p.tag, p.name, 10 + col * 94, 22 + row * 10, C.PAPER);
+  });
+  if (n > 0 && Math.floor(t * 2) % 2) drawTextOutlined(ctx, canControl ? 'HOST: PRESS S TO START' : 'HOST: START ON THE DASHBOARD', 8, 4 + ph + 4, C.LAMP, C.INK);
 }
 
 function liveVipPanel(lounge: PubPlayer[], s: Snapshot) {
-  const rows = Math.max(1, lounge.length);
-  const h = 18 + rows * 9 + (s.rule ? 20 : 0);
-  frame(ctx, 4, 4, 90, h, C.NIGHT, C.LAMP);
+  // the owner by name; everyone else in the lounge as their number (ten names would cover the street)
+  const owner = lounge.find((p) => p.id === s.ownerId);
+  const rest = lounge.filter((p) => p !== owner);
+  const perRow = 6;
+  const chipRows = Math.ceil(rest.length / perRow);
+  const h = 18 + (owner || !lounge.length ? 10 : 0) + chipRows * 11 + (s.rule ? 20 : 0);
+  const w = Math.max(90, owner ? badgeNameW(owner.tag, owner.name) + 22 : 0);
+  frame(ctx, 4, 4, w, h, C.NIGHT, C.LAMP);
   drawText(ctx, 'VIP LIST', 11, 9, C.LAMP);
-  if (!lounge.length) drawText(ctx, 'NOBODY YET', 11, 19, C.STONE_HI);
-  lounge.forEach((p, i) => {
-    const owner = p.id === s.ownerId;
-    if (owner) blit(ctx, sprite('crown1', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER }), 9, 19 + i * 9);
-    else blit(ctx, icon.star(), 10, 19 + i * 9);
-    drawText(ctx, p.name, 20, 19 + i * 9, owner ? C.LAMP : C.PAPER);
-  });
-  if (s.rule) {
-    const ry = 19 + rows * 9 + 2;
-    drawText(ctx, 'RULE:', 10, ry, C.STONE_HI);
-    drawText(ctx, RULES[s.rule].name, 10, ry + 9, C.NEON);
+  if (lounge.length) drawText(ctx, `${lounge.length}`, w - 4 - textWidth(`${lounge.length}`), 9, C.STONE_HI);
+  let y = 19;
+  if (!lounge.length) { drawText(ctx, 'NOBODY YET', 11, y, C.STONE_HI); y += 10; }
+  if (owner) {
+    blit(ctx, sprite('crown1', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER }), 9, y);
+    badgeName(owner.tag, owner.name, 19, y, C.LAMP);
+    y += 10;
   }
+  rest.forEach((p, i) => badge(p.tag, 10 + (i % perRow) * 13, y + Math.floor(i / perRow) * 11));
+  y += chipRows * 11;
+  if (s.rule) {
+    drawText(ctx, 'RULE:', 10, y + 1, C.STONE_HI);
+    drawText(ctx, RULES[s.rule].name, 10, y + 10, C.NEON);
+  }
+}
+
+/** Who used which Lounge power on whom. Sits on the sidewalk, left of Gus, so his "!" stays visible. */
+function drawCallout(y: number) {
+  const c = callout!;
+  const fill = c.power === 'banana' ? C.ALERT : c.power === 'distract' ? C.SAFE : C.VELVET;
+  const ink = c.power === 'distract' ? C.INK : C.PAPER;
+  const verb = c.power === 'banana' ? (c.target ? ' TRIPPED ' : ' MISSED') : c.power === 'distract' ? ' DISTRACTED GUS' : ' SNITCHED TO GUS';
+  const line2 = c.power === 'banana' ? (c.target ? 'BACK A FEW STEPS' : 'NOBODY TO TRIP') : c.power === 'distract' ? '+1S FOR THE RUNNERS' : 'HIS NEXT LOOK LASTS +1S';
+  const w1 = badgeNameW(c.byTag, c.by) + textWidth(verb) + (c.power === 'banana' && c.target ? badgeNameW(c.targetTag, c.target) : 0);
+  const w = Math.max(w1, textWidth(line2)) + 22;
+  const x = Math.max(4, Math.min(L.GUS_X - 20 - w, Math.round(130 - w / 2)));
+  rect(ctx, x + 2, y + 2, w, 22, C.INK);
+  rect(ctx, x, y, w, 22, C.INK);
+  rect(ctx, x + 1, y + 1, w - 2, 20, fill);
+  if (c.power === 'banana') blit(ctx, BANANA, x + 4, y + 7);
+  else blit(ctx, c.power === 'distract' ? icon.note(C.INK) : icon.bang(C.PAPER), x + 4, y + 7);
+  let cx = x + 16;
+  rect(ctx, x + 15, y + 2, w - 17, 10, C.INK);
+  cx += badgeName(c.byTag, c.by, cx, y + 3, C.PAPER);
+  drawText(ctx, verb, cx, y + 3, C.LAMP);
+  cx += textWidth(verb);
+  if (c.power === 'banana' && c.target) badgeName(c.targetTag, c.target, cx, y + 3, C.PAPER);
+  drawText(ctx, line2, x + 16, y + 13, ink);
 }
 
 function liveClock(s: Snapshot) {
@@ -930,18 +1109,25 @@ function livePushMeter(s: Snapshot) {
 function liveVotePanel(s: Snapshot) {
   const v = s.vote;
   if (!v) return;
-  const w = 144, x = 100, y = 4;
-  frame(ctx, x, y, w, 58, C.PAPER, C.INK);
-  nameTab(ctx, 'COUP VOTE', x + 6, y, C.VELVET, C.PAPER);
-  drawText(ctx, `${s.ownerName ?? '?'}'S CROWN`, x + 8, y + 10, C.INK);
+  const owner = s.players.find((p) => p.id === s.ownerId);
+  const w = 148, x = 98, y = 4;
+  frame(ctx, x, y, w, 70, C.PAPER, C.INK);
+  nameTab(ctx, s.allIn ? "EVERYONE'S IN: VOTE" : 'COUP VOTE', x + 6, y, C.VELVET, C.PAPER);
+  const ownW = badgeName(owner?.tag ?? 0, s.ownerName ?? '?', x + 8, y + 10, C.INK);
+  drawText(ctx, "'S CROWN", x + 8 + ownW, y + 10, C.INK);
   if (v.eligible === 0) {
-    drawText(ctx, 'NOBODY CAN VOTE.', x + 8, y + 22, C.STONE);
-    drawText(ctx, 'THE CROWN IS SAFE.', x + 8, y + 31, C.STONE);
+    drawText(ctx, 'NOBODY CAN VOTE.', x + 8, y + 24, C.STONE);
+    drawText(ctx, 'THE CROWN IS SAFE.', x + 8, y + 33, C.STONE);
     return;
   }
   meter(ctx, x + 8, y + 21, w - 16, 9, Math.min(1, v.cast / v.needed), v.cast >= v.needed ? C.SAFE : C.NEON, v.needed);
-  drawText(ctx, `${v.cast} OF ${v.needed} VOTES`, x + 8, y + 33, C.INK);
-  if (v.successorName) drawText(ctx, `NEXT: ${v.successorName}`, x + 8, y + 42, C.VELVET);
+  drawText(ctx, `CROWN ${v.cast} OF ${v.needed}`, x + 8, y + 33, v.cast >= v.needed ? C.SAFE : C.INK);
+  const keep = `KEEP ${v.kept}`;
+  drawText(ctx, keep, x + w - 8 - textWidth(keep), y + 33, C.STONE);
+  if (v.successorName) {
+    drawText(ctx, 'IF IT PASSES:', x + 8, y + 45, C.STONE);
+    badgeName(v.successorTag, v.successorName, x + 8, y + 56, C.VELVET);
+  } else drawText(ctx, `${v.eligible} CAN VOTE`, x + 8, y + 45, C.STONE);
 }
 
 function liveReveal(s: Snapshot) {
@@ -949,35 +1135,60 @@ function liveReveal(s: Snapshot) {
   dither(ctx, 0, 0, L.W, L.TEXT_Y, C.INK);
   const w = 288, x = (L.W - w) / 2, y = 2;
   frame(ctx, x, y, w, 140);
-  drawTextCentered(ctx, "TONIGHT'S VIP", L.W / 2, y + 7, C.VELVET, 2);
-  if (r?.winnerId && r.winnerName) {
-    const v = lp.get(r.winnerId);
-    blit(ctx, sprite('crown2', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER }), L.W / 2 - textWidth(r.winnerName, 2) / 2 - 22, y + 26, false, 2);
-    drawTextCentered(ctx, r.winnerName, L.W / 2, y + 28, C.INK, 2);
-    if (v) drawPlayer(ctx, v.look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand', L.W / 2 + textWidth(r.winnerName, 2) / 2 + 14, y + 44);
-    drawTextCentered(ctx, r.prevOwnerName ? `TOOK THE CROWN FROM ${r.prevOwnerName}` : r.ropeSnapped ? 'KEPT THE CROWN THROUGH THE RUSH' : 'KEPT THE CROWN', L.W / 2, y + 46, r.prevOwnerName ? C.ALERT : C.STONE);
-  } else {
-    drawTextCentered(ctx, 'NOBODY. GUS WINS.', L.W / 2, y + 28, C.INK, 2);
+  const crown = sprite('crown1', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER });
+  const voteLine = r?.vote ? `CROWN ${r.vote.cast} OF ${r.vote.needed} NEEDED  KEEP ${r.vote.kept}` : r?.allIn ? 'EVERYONE GOT IN' : r?.ropeSnapped ? 'THE ROPE SNAPPED' : 'NOBODY COULD VOTE';
+  // 1) the crown first: who took it from whom (or kept it), and the vote that did it
+  if (revealAt < 0 || t - revealAt < 4.5) {
+    drawTextCentered(ctx, "TONIGHT'S VIP", L.W / 2, y + 8, C.VELVET, 2);
+    if (r?.winnerId && r.winnerName) {
+      const v = lp.get(r.winnerId);
+      const nw = textWidth(r.winnerName, 2) + (r.winnerTag ? badgeW(r.winnerTag) + 4 : 0);
+      const nx = Math.round(L.W / 2 - nw / 2);
+      blit(ctx, sprite('crown2', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER }), nx - 22, y + 32, false, 2);
+      if (r.winnerTag) badge(r.winnerTag, nx, y + 35);
+      drawText(ctx, r.winnerName, nx + (r.winnerTag ? badgeW(r.winnerTag) + 4 : 0), y + 34, C.INK, 2);
+      if (v) drawPlayer(ctx, v.look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand', nx + nw + 14, y + 52);
+      if (r.prevOwnerName) {
+        const lw = textWidth('TOOK THE CROWN FROM ') + badgeNameW(r.prevOwnerTag, r.prevOwnerName);
+        const lx = Math.round(L.W / 2 - lw / 2);
+        drawText(ctx, 'TOOK THE CROWN FROM ', lx, y + 64, C.ALERT);
+        badgeName(r.prevOwnerTag, r.prevOwnerName, lx + textWidth('TOOK THE CROWN FROM '), y + 64, C.ALERT);
+      } else drawTextCentered(ctx, r.ropeSnapped ? 'KEPT THE CROWN THROUGH THE RUSH' : 'KEPT THE CROWN', L.W / 2, y + 64, C.STONE);
+    } else drawTextCentered(ctx, 'NOBODY. GUS WINS.', L.W / 2, y + 34, C.INK, 2);
+    drawTextCentered(ctx, voteLine, L.W / 2, y + 80, C.INK);
+    if (r?.vote) drawTextCentered(ctx, `${r.vote.eligible} COULD VOTE: STRICT MAJORITY`, L.W / 2, y + 90, C.STONE);
+    drawTextCentered(ctx, 'SCORES NEXT...', L.W / 2, y + 120, Math.floor(t * 2) % 2 ? C.STONE : C.VELVET);
+    return;
   }
-  rect(ctx, x + 8, y + 57, w - 16, 1, C.INK);
-  drawText(ctx, 'RANKING: CROWN FIRST', x + 10, y + 61, C.STONE);
-  (r?.ranking ?? []).slice(0, 7).forEach((row, i) => {
-    const yy = y + 71 + i * 8;
+  // 2) then scores and ranks (crown holder first), with everyone's number
+  if (r?.winnerName) {
+    blit(ctx, crown, x + 8, y + 5);
+    const vw = badgeName(r.winnerTag, r.winnerName, x + 19, y + 5, C.VELVET);
+    if (r.prevOwnerName) {
+      drawText(ctx, ' TOOK IT FROM ', x + 19 + vw, y + 5, C.STONE);
+      badgeName(r.prevOwnerTag, r.prevOwnerName, x + 19 + vw + textWidth(' TOOK IT FROM '), y + 5, C.INK);
+    } else drawText(ctx, ' KEPT THE CROWN', x + 19 + vw, y + 5, C.STONE);
+  } else drawText(ctx, 'NOBODY GOT THE CROWN', x + 10, y + 5, C.STONE);
+  drawText(ctx, voteLine, x + 10, y + 16, C.STONE);
+  rect(ctx, x + 8, y + 26, w - 16, 1, C.INK);
+  drawText(ctx, 'RANKING: CROWN FIRST', x + 10, y + 30, C.STONE);
+  (r?.ranking ?? []).slice(0, 10).forEach((row, i) => {
+    const yy = y + 40 + i * 9;
     const c = i === 0 ? C.VELVET : C.INK;
     drawText(ctx, `#${i + 1}`, x + 10, yy, c);
-    drawText(ctx, row.name, x + 28, yy, c);
-    if (r?.winnerId === row.id) blit(ctx, sprite('crown1', CROWN_ICON, { k: C.INK, y: C.LAMP, w: C.PAPER }), x + 30 + textWidth(row.name), yy);
+    const nw = badgeName(row.tag, row.name, x + 28, yy, c);
+    if (r?.winnerId === row.id) blit(ctx, crown, x + 30 + nw, yy);
     const sc = `${row.score}`;
-    drawText(ctx, sc, x + 136 - textWidth(sc), yy, c);
+    drawText(ctx, sc, x + 150 - textWidth(sc), yy, c);
   });
-  drawText(ctx, 'AWARDS', x + 148, y + 61, C.STONE);
+  drawText(ctx, 'AWARDS', x + 160, y + 30, C.STONE);
   (r?.awards ?? []).forEach((a, i) => {
-    const yy = y + 71 + i * 17;
-    drawText(ctx, a.label, x + 148, yy, C.STONE);
-    drawText(ctx, a.value ? `${a.name} ${a.value}` : a.name, x + 148, yy + 9, C.INK);
+    const yy = y + 40 + i * 19;
+    drawText(ctx, a.label, x + 160, yy, C.STONE);
+    drawText(ctx, a.value ? `${a.name} ${a.value}` : a.name, x + 160, yy + 9, C.INK);
   });
-  if (Math.floor(t) % 2) drawTextCentered(ctx, 'MUGSHOTS SENT TO YOUR PHONES', L.W / 2, y + 128, C.VELVET);
-  else drawTextCentered(ctx, 'HOST: R FOR A NEW NIGHT', L.W / 2, y + 128, C.STONE);
+  if (Math.floor(t) % 2) drawTextCentered(ctx, 'MUGSHOTS SENT TO YOUR PHONES', L.W / 2 + 70, y + 128, C.VELVET);
+  else drawTextCentered(ctx, 'HOST: R FOR A NEW NIGHT', L.W / 2 + 70, y + 128, C.STONE);
 }
 
 const CROWN_ICON = ['k..kk..k', 'kk.kk.kk', 'kykyykyk', 'kyyyyyyk', 'kyyyyyyk', 'kkkkkkkk', '........', '........'];
@@ -985,9 +1196,11 @@ const CROWN_ICON = ['k..kk..k', 'kk.kk.kk', 'kykyykyk', 'kyyyyyyk', 'kyyyyyyk', 
 addEventListener('keydown', (e) => {
   if (!LIVE || !net) return;
   const k = e.key.toLowerCase();
-  if (k === 's' && (!snap || snap.phase === 'lobby' || snap.phase === 'reveal')) net.send({ t: 'start' });
-  if (k === 'm') setMute(!muted);
-  if (k === 'r') { net.send({ t: 'reset' }); lp.clear(); }
+  const canStart = canControl && k === 's' && (!snap || snap.phase === 'lobby' || snap.phase === 'reveal');
+  if (k === 's') keyLog.push({ key: k, phase: snap?.phase ?? null, startSent: canStart, focus: describeFocus() });
+  if (canStart) net.send({ t: 'start' });
+  if (k === 'm') panel?.setMute(!muted);
+  if (k === 'r' && canControl) { net.send({ t: 'reset' }); lp.clear(); }
 });
 
 // ---------- loop ----------
@@ -999,8 +1212,14 @@ function loop(now: number) {
   if (LIVE) drawLiveScreen(dt); else draw(dt);
   requestAnimationFrame(loop);
 }
-addEventListener('pointerdown', unlock);
-addEventListener('keydown', unlock);
+addEventListener('pointerdown', () => { unlock(); if (LIVE) wakeAudio(); });
+addEventListener('keydown', () => { unlock(); if (LIVE) wakeAudio(); });
+const panel = LIVE ? mountPanel({
+  inLobby: () => !snap || snap.phase === 'lobby' || snap.phase === 'reveal',
+  showTurnTest: () => { showBanner('TURN ALERT TEST', 'GUS IS TURNING AROUND', C.ALERT, 1.8); gusText = { text: '!', color: C.ALERT, until: t + 1.5 }; },
+  onMuteChange: (m) => setMute(m),
+}) : null;
+void startClub; void loadAudition;
 addEventListener('resize', () => scr.fitFixed(host));
 if (!LIVE) enter(params.get('state') as S || 'auto');
 requestAnimationFrame(loop);

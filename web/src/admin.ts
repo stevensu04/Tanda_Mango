@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { connect } from './net';
 import { T } from '../../shared/protocol';
 import type { AdminState, Settings } from '../../shared/protocol';
@@ -7,10 +8,52 @@ const clean = (s: string | null) => (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g
 
 let room = clean(new URLSearchParams(location.search).get('room'));
 let st: AdminState | null = null;
+// The dashboard unlocks one room with that room's password. The unlock lasts while this page is
+// open (it survives a dropped connection); reloading the page asks for the password again.
+let token = '';
+let authed = false;
+let roomExists = false;
+type View = 'landing' | 'create' | 'return' | 'room';
+function view(v: View) {
+  for (const id of ['landing', 'create', 'return'] as const) $(id).classList.toggle('hide', v !== id);
+  $('roomui').classList.toggle('hide', v !== 'room');
+  if (v === 'return') {
+    const known = !!room && roomExists;
+    $('welcome').textContent = known ? `Welcome back to ${room}` : 'Return to my game';
+    $('coderow').classList.toggle('hide', known);
+    if (room && !($('retcode') as HTMLInputElement).value) ($('retcode') as HTMLInputElement).value = room;
+    setTimeout(() => ($(known ? 'retpw' : 'retcode') as HTMLInputElement).focus(), 0);
+  }
+  if (v === 'create') setTimeout(() => ($('newpw') as HTMLInputElement).focus(), 0);
+}
+function setUrlRoom(code: string) {
+  const u = new URL(location.href);
+  if (code) u.searchParams.set('room', code); else u.searchParams.delete('room');
+  history.replaceState(null, '', u);
+}
 
 const net = connect(
-  () => ({ t: 'hello', role: 'admin', room: room || undefined }),
-  (m) => { if (m.t === 'admin') { st = m; render(m); } },
+  () => ({ t: 'hello', role: 'admin', room: room || undefined, token: token || undefined }),
+  (m) => {
+    if (m.t === 'auth') {
+      if (m.ok && m.token && m.code) {
+        token = m.token; authed = true; room = m.code; setUrlRoom(room);
+        for (const id of ['newpw', 'retpw']) ($(id) as HTMLInputElement).value = '';
+        $('createerr').textContent = ''; $('returnerr').textContent = '';
+      } else if (!m.ok) {
+        authed = false; st = null;
+        if (m.code !== undefined) roomExists = !!m.exists;
+        const err = m.error ? `${m.error}${m.retryIn ? `: try again in ${m.retryIn} s` : ''}` : '';
+        if (!$('create').classList.contains('hide')) { $('createerr').textContent = err; return; }
+        $('returnerr').textContent = err;
+        // a room code in the URL goes straight to "Welcome back"; otherwise the two choices
+        if (err || (room && $('return').classList.contains('hide'))) view(room || err ? 'return' : 'landing');
+        else if (!room) view('landing');
+      }
+      return;
+    }
+    if (m.t === 'admin') { authed = true; st = m; render(m); }
+  },
   (up) => {
     const c = $('conn');
     c.textContent = up ? 'CONNECTED' : 'RECONNECTING…';
@@ -18,22 +61,37 @@ const net = connect(
   },
 );
 
-function pickRoom(code: string) {
+/** Switch the dashboard to another room code (it then asks for that room's password). */
+export function pickRoom(code: string) {
   room = clean(code);
-  const u = new URL(location.href);
-  if (room) u.searchParams.set('room', room); else u.searchParams.delete('room');
-  history.replaceState(null, '', u);
-  st = st && { ...st, room: null };
-  if (st) render(st);
-  // the server lets an admin re-attach by sending hello again on the same socket
+  setUrlRoom(room);
+  token = ''; authed = false; st = null;
   net.send({ t: 'hello', role: 'admin', room: room || undefined });
 }
 
-$('codeform').addEventListener('submit', (e) => {
+$('goCreate').addEventListener('click', () => view('create'));
+$('goReturn').addEventListener('click', () => { room = ''; roomExists = false; view('return'); });
+document.querySelectorAll<HTMLButtonElement>('button.back').forEach((b) => b.addEventListener('click', () => { room = ''; setUrlRoom(''); view('landing'); }));
+document.querySelectorAll<HTMLButtonElement>('button.showpw').forEach((b) => b.addEventListener('click', () => {
+  const i = $(b.dataset.for!) as HTMLInputElement;
+  i.type = i.type === 'password' ? 'text' : 'password';
+  b.textContent = i.type === 'password' ? 'Show' : 'Hide';
+}));
+$('createform').addEventListener('submit', (e) => {
   e.preventDefault();
-  const v = clean(($('code') as HTMLInputElement).value);
-  if (v) pickRoom(v);
+  const pw = ($('newpw') as HTMLInputElement).value;
+  if (!pw.trim()) { $('createerr').textContent = 'Choose a password first.'; return; }
+  net.send({ t: 'create', password: pw });
 });
+$('returnform').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = room && roomExists ? room : clean(($('retcode') as HTMLInputElement).value);
+  const pw = ($('retpw') as HTMLInputElement).value;
+  if (!code || !pw) { $('returnerr').textContent = 'Enter the room code and its password.'; return; }
+  room = code;
+  net.send({ t: 'unlock', room: code, password: pw });
+});
+$('leave').addEventListener('click', () => { token = ''; authed = false; st = null; view(room ? 'return' : 'landing'); net.send({ t: 'hello', role: 'admin', room: room || undefined }); });
 
 const fmt = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`;
 const running = (p: string) => p === 'play' || p === 'push' || p === 'vote';
@@ -55,7 +113,7 @@ $<HTMLInputElement>('npcs').addEventListener('change', (e) => set({ npcs: (e.tar
 $<HTMLInputElement>('ai').addEventListener('change', (e) => set({ ai: (e.target as HTMLInputElement).checked }));
 $('start').addEventListener('click', () => net.send({ t: 'start' }));
 $('reset').addEventListener('click', () => {
-  if (st?.room && running(st.room.phase) && !confirm('A round is running. Reset to lobby?')) return;
+  if (!confirm(st?.room && running(st.room.phase) ? 'A round is running. Reset everyone to the lobby?' : 'Reset to the lobby?')) return;
   net.send({ t: 'reset' });
 });
 $('players').addEventListener('click', (e) => {
@@ -67,22 +125,9 @@ $('players').addEventListener('click', (e) => {
 function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!); }
 function active(el: Element) { return document.activeElement === el; }
 
+let qrFor = '';
 function render(s: AdminState) {
-  // room list
-  const rl = $('rooms');
-  const key = s.rooms.map((r) => `${r.code}${r.phase}${r.humans}${r.screens}`).join('|') + '#' + room;
-  if (rl.dataset.key !== key) {
-    rl.dataset.key = key;
-    rl.innerHTML = s.rooms.length ? '' : '<span class="dim">No open rooms.</span>';
-    for (const r of s.rooms) {
-      const b = document.createElement('button');
-      if (r.code === room) b.className = 'sel';
-      b.textContent = `${r.code} · ${r.phase} · ${r.humans}P · ${r.screens} screen${r.screens === 1 ? '' : 's'}`;
-      b.onclick = () => pickRoom(r.code);
-      rl.appendChild(b);
-    }
-  }
-
+  if (!authed) return;
   // Claude panel
   const a = s.ai;
   $('nokey').classList.toggle('hide', a.keyPresent);
@@ -99,9 +144,8 @@ function render(s: AdminState) {
   $('lasterr').textContent = a.lastError ? `LAST ERROR: ${a.lastError}` : '';
 
   const r = s.room;
-  $('roomui').classList.toggle('hide', !r);
-  $('noroom').classList.toggle('hide', !!r);
-  if (!r) return;
+  if (!r) { view('landing'); return; }
+  view('room');
 
   $('rcode').textContent = r.code;
   $('phase').textContent = r.phase.toUpperCase();
@@ -111,10 +155,14 @@ function render(s: AdminState) {
   const origin = location.origin;
   // phones can't open "localhost": hand out the laptop's LAN address, like the projector QR does
   const phoneOrigin = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? __LAN_ORIGIN__ : origin;
+  // projector and player links carry only the public code: control stays on this dashboard
   const ls = `${origin}/screen.html?room=${r.code}`;
   const lp = `${phoneOrigin}/play.html?room=${r.code}`;
-  const as = $<HTMLAnchorElement>('lscreen'); if (as.href !== ls) { as.href = ls; as.textContent = ls; }
+  const as = $<HTMLAnchorElement>('openproj'); if (as.href !== ls) as.href = ls;
   const ap = $<HTMLAnchorElement>('lphone'); if (ap.href !== lp) { ap.href = lp; ap.textContent = lp; }
+  if (qrFor !== lp) { qrFor = lp; void QRCode.toCanvas($<HTMLCanvasElement>('qr'), lp, { width: 132, margin: 0, errorCorrectionLevel: 'M' }); }
+  const screens = s.rooms.find((x) => x.code === r.code)?.screens ?? 0;
+  $('screens').textContent = screens ? `PROJECTOR CONNECTED (${screens})` : 'NO PROJECTOR YET';
 
   // settings (don't fight the user's hands)
   const cfg = r.settings;

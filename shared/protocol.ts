@@ -20,11 +20,14 @@ export const RULES: Record<Rule, { name: string; blurb: string[]; banner: string
   disco: { name: 'DISCO MODE', blurb: ['THE MUSIC KICKS IN.', 'GUS TURNS FASTER.'], banner: 'FASTER TURNS' },
 };
 export const POWER_IDS: Power[] = ['banana', 'distract', 'snitch'];
-export const POWERS: Record<Power, { name: string; blurb: string }> = {
-  banana: { name: 'BANANA', blurb: 'TRIP SOMEONE' },
-  distract: { name: 'DISTRACT', blurb: 'GUS LOOKS AWAY' },
-  snitch: { name: 'SNITCH', blurb: 'GUS LOOKS LONGER' },
+/** `who` says whom the power works for, so the button reads as a choice of side. */
+export const POWERS: Record<Power, { name: string; blurb: string; who: string }> = {
+  banana: { name: 'BANANA', blurb: 'RANDOM RUNNER SLIPS', who: 'TRIP A RUNNER' },
+  distract: { name: 'DISTRACT', blurb: 'GUS LOOKS AWAY +1S', who: 'HELP THE RUNNERS' },
+  snitch: { name: 'SNITCH', blurb: 'HIS NEXT LOOK +1S', who: 'HELP GUS' },
 };
+
+export type VoteChoice = 'crown' | 'keep';
 
 export interface Settings {
   roundSecs: number;       // 90 or 120
@@ -35,14 +38,17 @@ export interface Settings {
 
 // ---------- client -> server ----------
 export type ClientMsg =
-  | { t: 'hello'; role: 'screen'; room?: string }
+  | { t: 'hello'; role: 'screen'; room?: string; key?: string }
   | { t: 'hello'; role: 'phone'; token: string; room?: string; motion?: boolean }
-  | { t: 'hello'; role: 'admin'; room?: string }
+  | { t: 'hello'; role: 'admin'; room?: string; token?: string }
+  | { t: 'create'; password: string }
+  | { t: 'unlock'; room: string; password: string }
   | { t: 'join'; name: string; seed: number }
   | { t: 'caps'; motion: boolean }
   | { t: 'press' }
   | { t: 'release' }
   | { t: 'tap' }
+  | { t: 'vote'; choice: VoteChoice }    // coup vote; a plain tap during the vote still means 'crown'
   | { t: 'shake'; e: number }            // 0..1 shake energy for the last ~100 ms
   | { t: 'rule'; rule: Rule }
   | { t: 'power'; power: Power }
@@ -57,6 +63,7 @@ export type ClientMsg =
 // ---------- server -> projector ----------
 export interface PubPlayer {
   id: string;
+  tag: number;           // short stable player number (1..), shown on the phone, the avatar and the results; 0 = NPC
   name: string;
   seed: number;
   x: number;             // 0 start .. 1 rope
@@ -69,6 +76,7 @@ export interface PubPlayer {
   entryOrder: number;    // 0 = not in yet
   score: number;
   voted: boolean;
+  kept: boolean;         // chose KEEP in the coup vote
   npc: boolean;
   nerd: boolean;         // sitting out a NICE TRY, NERD timeout
   connected: boolean;
@@ -76,12 +84,27 @@ export interface PubPlayer {
 
 export interface Hud { ego: number; paranoia: number; boredom: number; suspicion: number; mono: string }
 
+export interface VoteState {
+  cast: number;                 // CROWN votes
+  kept: number;                 // KEEP votes
+  needed: number;               // strict majority of eligible
+  eligible: number;
+  successorId: string | null;   // who takes the seat if it passes now: the earliest-entered CROWN voter
+  successorName: string | null;
+  successorTag: number;
+}
+
 export interface Reveal {
   winnerId: string | null;
   winnerName: string | null;
+  winnerTag: number;
   prevOwnerName: string | null; // set when the crown changed hands in the vote
+  prevOwnerTag: number;
+  ownerBeforeVote: string | null; // who held the crown when the vote opened
   ropeSnapped: boolean;
-  ranking: { id: string; name: string; score: number }[];
+  allIn: boolean;               // the vote opened early because nobody was left outside
+  vote: { cast: number; kept: number; needed: number; eligible: number } | null;
+  ranking: { id: string; tag: number; name: string; score: number }[];
   awards: { label: string; name: string; value: string }[];
   toast: string;                // Gus's closing line (scripted first, Claude's when it lands)
 }
@@ -104,7 +127,8 @@ export interface Snapshot {
   players: PubPlayer[];
   push: { crowd: number; defend: number; outside: number; lounge: number } | null;
   ropeSnapped: boolean | null;
-  vote: { cast: number; needed: number; eligible: number; successorName: string | null } | null;
+  allIn: boolean;        // everyone got in before the rush: straight to the vote
+  vote: VoteState | null;
   reveal: Reveal | null;
   hud: Hud;
   say: Say | null;       // the line currently in Gus's text box
@@ -142,10 +166,22 @@ export interface SoloView {
   beaten: boolean;
 }
 
+/** A named, per-phone result of someone's Lounge power ("NOT A COP TRIPPED YOU"). */
+export interface Notice { text: string; tone: 'good' | 'bad' | 'info'; n: number }
+
+/** This phone's view of the coup vote. */
+export interface MyVote extends VoteState {
+  choice: VoteChoice | null;
+  ifCrownId: string | null;     // who would take the seat if this phone voted CROWN (now)
+  ifCrownName: string | null;
+  ifCrownTag: number;
+}
+
 export interface Me {
   t: 'me';
   code: string | null;
   id: string | null;
+  tag: number;
   role: PhoneRole;
   phase: RoundPhase;
   timeLeft: number;
@@ -166,12 +202,15 @@ export interface Me {
   nerdLeft: number;
   isOwner: boolean;
   ownerName: string | null;
+  ownerTag: number;
   ownerPickLeft: number;
   ruleChoices: Rule[];
   powers: { power: Power; cd: number }[];
   pushTaps: number;
   voted: boolean;
-  vote: Snapshot['vote'];
+  vote: MyVote | null;
+  allIn: boolean;
+  notice: Notice | null;
   rank: number;
   total: number;
   score: number;
@@ -194,8 +233,9 @@ export type GameEvent =
   | { t: 'ev'; kind: 'turn' }
   | { t: 'ev'; kind: 'nap' }
   | { t: 'ev'; kind: 'nerd'; id: string; name: string }
-  | { t: 'ev'; kind: 'power'; power: Power; by: string; target: string | null; targetId: string | null }
+  | { t: 'ev'; kind: 'power'; power: Power; by: string; byId: string; byTag: number; target: string | null; targetId: string | null; targetTag: number }
   | { t: 'ev'; kind: 'rope'; snapped: boolean }
+  | { t: 'ev'; kind: 'allin' }
   | { t: 'ev'; kind: 'say'; text: string; who: 'GUS' | 'LIVE'; speak: boolean };
 
 export interface AiStats {
@@ -231,5 +271,10 @@ export type ServerMsg =
   | Me
   | GameEvent
   | AdminState
-  | { t: 'room'; code: string }
-  | { t: 'ping'; n: number };
+  | { t: 'room'; code: string; control?: boolean }
+  | { t: 'ping'; n: number }
+  /** host login result; token is kept by the admin page and sent in its hello */
+  | { t: 'auth'; ok: boolean; code?: string; exists?: boolean; token?: string; error?: string; retryIn?: number }
+  | { t: 'created'; code: string }
+  /** a projector without the room's key (or for a room that is gone) */
+  | { t: 'denied'; reason: 'no-room' | 'waiting' };

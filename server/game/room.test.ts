@@ -1,3 +1,4 @@
+import { NICKNAMES } from '../../shared/text';
 import { describe, it, expect } from 'vitest';
 import { Room, type Player } from './room';
 import { Gus } from './gus';
@@ -280,6 +281,7 @@ describe('VIP owner and chaos rules', () => {
   it('auto-picks one of the offered rules if the owner does not tap in 12 s', () => {
     const r = mkRoom();
     const a = r.join('a', 'ANNA', 1);
+    r.join('z', 'ZED', 9); // stays outside, so the round doesn't jump to the all-in vote
     r.start();
     let ownerAt = -1;
     run(r, 40, { [a]: careful }, (e) => { if (e.kind === 'owner') ownerAt = r.clock; });
@@ -438,11 +440,173 @@ describe('finale, crown and results', () => {
   it('votes right after the rush do not count (lift and tap again)', () => {
     const r = mkRoom({ roundSecs: 90 });
     const a = r.join('a', 'ANNA', 1), b = r.join('b', 'BEN', 2);
+    r.join('z', 'ZED', 9); // stays outside: the normal rush, then the vote
     r.start();
     run(r, 90 - T.VOTE + 0.05, { [a]: careful, [b]: careful });
     expect(r.phase).toBe('vote');
     r.tap(b);
     expect(r.players.get(b)!.voted).toBe(false);
+  });
+});
+
+describe('everyone in: straight to the vote', () => {
+  it('the last runner through the rope opens a full vote countdown at once; no rope contest', () => {
+    const r = mkRoom({ roundSecs: 120 });
+    const ids = ['ANNA', 'BEN', 'CLEO'].map((n, i) => r.join(n.toLowerCase(), n, i + 1));
+    r.start();
+    const bots = Object.fromEntries(ids.map((id) => [id, careful]));
+    const evs: GameEvent[] = [];
+    let lastInAt = -1, voteAt = -1;
+    while (r.phase === 'play' && r.clock < 110) {
+      for (const e of run(r, DT, bots)) { evs.push(e); if (e.kind === 'entered') lastInAt = r.clock; }
+    }
+    voteAt = r.clock;
+    expect(r.phase).toBe('vote');
+    expect(voteAt).toBeLessThan(120 - T.PUSH - T.VOTE);  // well before the scheduled rush
+    expect(voteAt - lastInAt).toBeLessThanOrEqual(DT + 1e-9);
+    expect(kinds(evs, 'allin')).toHaveLength(1);
+    expect(kinds(evs, 'rope')).toHaveLength(0);
+    expect(r.snapshot().allIn).toBe(true);
+    expect(r.snapshot().ropeSnapped).toBeNull();
+    expect(r.timeLeft).toBeCloseTo(T.VOTE, 1);
+    expect(evs.some((e) => e.kind === 'say' && /EVERYONE'S IN\. TIME TO VOTE/.test(e.text))).toBe(true);
+    const more = run(r, T.VOTE - 0.2);
+    expect(r.phase).toBe('vote');
+    run(r, 0.3);
+    expect(r.phase).toBe('reveal');
+    expect(r.reveal!.allIn).toBe(true);
+    expect(kinds(more, 'allin')).toHaveLength(0);
+  });
+
+  it('a last runner who arrives on the push boundary gets one vote, one reveal, never two', () => {
+    for (const offset of [-2 * DT, -DT, 0, DT, 2 * DT]) {
+      const r = mkRoom({ roundSecs: 90 });
+      const a = r.join('a', 'ANNA', 1), b = r.join('b', 'BEN', 2);
+      r.start();
+      // ANNA gets in early; BEN is parked so he reaches the rope right around the push switch
+      run(r, 40, { [a]: careful });
+      const pushAt = 90 - T.PUSH - T.VOTE;
+      const p = r.players.get(b)!;
+      p.state = 'outside'; p.needFreshPress = false;
+      r.press(b);
+      while (r.clock < pushAt + offset - DT * 1.5) { p.x = 0.5; r.tick(DT); r.drainEvents(); }
+      p.x = 1 - 0.5 * DT / T.TRACK_SECONDS; // one tick from the rope
+      const evs: GameEvent[] = [];
+      const phases: string[] = [];
+      for (let i = 0; i < Math.round(30 / DT) && r.phase !== 'reveal'; i++) {
+        r.tick(DT);
+        evs.push(...r.drainEvents());
+        if (phases[phases.length - 1] !== r.phase) phases.push(r.phase);
+      }
+      expect(r.phase).toBe('reveal');
+      const opens = kinds(evs, 'allin').length + kinds(evs, 'rope').length;
+      expect(opens).toBe(1);
+      expect(phases.filter((x) => x === 'vote')).toHaveLength(1);
+      expect(phases.filter((x) => x === 'reveal')).toHaveLength(1);
+      // either he got in (all-in vote) or the push caught him first (normal rush)
+      expect(['vote', 'push']).toContain(phases[0] === 'play' ? phases[1] : phases[0]);
+    }
+  });
+});
+
+describe('the coup vote card', () => {
+  function toVote() {
+    const r = mkRoom({ roundSecs: 120 });
+    const ids = ['ANNA', 'BEN', 'CLEO', 'DAVE', 'EVE'].map((n, i) => r.join(n.toLowerCase(), n, i + 1));
+    r.start();
+    const bots = Object.fromEntries(ids.map((id) => [id, careful]));
+    while (r.phase === 'play' || r.phase === 'push') run(r, DT, bots);
+    expect(r.phase).toBe('vote');
+    run(r, T.VOTE_LIFT + 0.05);
+    const byOrder = ids.map((id) => r.players.get(id)!).sort((x, y) => x.entryOrder - y.entryOrder);
+    return { r, byOrder };
+  }
+
+  it('shows each voter whom a CROWN tap would seat, and updates when an earlier entrant joins in', () => {
+    const { r, byOrder } = toVote();
+    const [owner, second, third, fourth, fifth] = byOrder;
+    expect(r.ownerId).toBe(owner.id);
+    expect(r.me(owner.id).role).toBe('defending');
+    expect(r.me(owner.id).vote!.ifCrownId).toBeNull();
+    // nobody has voted: a CROWN tap seats yourself
+    expect(r.me(fourth.id).vote!.ifCrownId).toBe(fourth.id);
+    r.vote(fifth.id, 'crown');
+    expect(r.me(fourth.id).vote!.ifCrownId).toBe(fourth.id);
+    expect(r.me(third.id).vote!.ifCrownName).toBe(third.name);
+    r.vote(fourth.id, 'crown');
+    expect(r.snapshot().vote!.successorId).toBe(fourth.id);
+    // the second entrant joins the coup: every card now names them
+    r.vote(second.id, 'crown');
+    expect(r.snapshot().vote!.successorName).toBe(second.name);
+    expect(r.me(third.id).vote!.ifCrownName).toBe(second.name);
+    expect(r.me(fifth.id).vote!.successorName).toBe(second.name);
+    expect(r.me(fifth.id).vote!.choice).toBe('crown');
+    // strict majority of 4 eligible = 3: the coup passes, the earliest supporter is crowned
+    expect(r.snapshot().vote!.needed).toBe(3);
+    run(r, T.VOTE);
+    expect(r.reveal!.winnerId).toBe(second.id);
+    expect(r.reveal!.prevOwnerName).toBe(owner.name);
+    expect(r.reveal!.vote).toEqual({ cast: 3, kept: 0, needed: 3, eligible: 4 });
+  });
+
+  it('KEEP is a real choice: it is counted, it is final, and it does not help the coup', () => {
+    const { r, byOrder } = toVote();
+    const [owner, second, third, fourth] = byOrder;
+    r.vote(second.id, 'keep');
+    r.vote(second.id, 'crown'); // too late: one choice
+    expect(r.players.get(second.id)!.voted).toBe(false);
+    expect(r.me(second.id).vote!.choice).toBe('keep');
+    expect(r.me(second.id).vote!.ifCrownId).toBeNull();
+    r.vote(third.id, 'crown'); r.vote(fourth.id, 'crown');
+    expect(r.snapshot().vote).toMatchObject({ cast: 2, kept: 1, needed: 3 });
+    run(r, T.VOTE);
+    expect(r.reveal!.winnerId).toBe(owner.id);
+    expect(r.reveal!.prevOwnerName).toBeNull();
+    expect(r.reveal!.ownerBeforeVote).toBe(owner.name);
+  });
+});
+
+describe('player numbers', () => {
+  it('ten phones get 1..10, same names stay and are told apart by number, numbers survive a reconnect and are reused after a leave', () => {
+    const r = mkRoom();
+    const ids = Array.from({ length: 10 }, (_, i) => r.join(`t${i}`, i < 3 ? 'NOT A COP' : `P${i}`, i));
+    expect(ids.map((id) => r.players.get(id)!.tag)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(ids.slice(0, 3).map((id) => r.players.get(id)!.name)).toEqual(['NOT A COP', 'NOT A COP', 'NOT A COP']);
+    r.start();
+    r.setConnected(ids[1], false);
+    expect(r.join('t1', 'WHATEVER', 99)).toBe(ids[1]);
+    expect(r.me(ids[1]).tag).toBe(2);
+    expect(r.me(ids[1]).name).toBe('NOT A COP');
+    expect(r.snapshot().players.find((p) => p.id === ids[1])!.tag).toBe(2);
+    r.reset();
+    r.setConnected(ids[4], false);
+    r.dropDisconnected();
+    const n = r.join('new', 'NEWBIE', 5);
+    expect(r.players.get(n)!.tag).toBe(5);
+  });
+});
+
+describe('lounge powers name who they hit', () => {
+  it('banana: the thrower and the runner each get a named notice; distract and snitch tell the runners', () => {
+    const r = mkRoom();
+    const a = r.join('a', 'ANNA', 1), b = r.join('b', 'BEN', 2);
+    r.start();
+    while (!r.ownerId) run(r, DT, { [a]: careful });
+    r.players.get(b)!.x = 0.5;
+    const evs: GameEvent[] = [];
+    r.usePower(a, 'banana'); evs.push(...r.drainEvents());
+    expect(r.me(a).notice!.text).toBe('YOU TRIPPED 02 BEN');
+    expect(r.me(b).notice!.text).toBe('01 ANNA TRIPPED YOU');
+    expect(r.me(b).notice!.tone).toBe('bad');
+    const pe = evs.find((e) => e.kind === 'power');
+    expect(pe).toMatchObject({ power: 'banana', by: 'ANNA', target: 'BEN', targetId: b, targetTag: 2, byTag: 1 });
+    r.usePower(a, 'distract');
+    expect(r.me(b).notice!.text).toBe('01 ANNA DISTRACTED GUS: +1S');
+    r.usePower(a, 'snitch');
+    expect(r.me(b).notice!.text).toBe('01 ANNA SNITCHED: NEXT LOOK +1S');
+    expect(r.me(a).notice!.text).toMatch(/YOU SNITCHED/);
+    run(r, 3.1);
+    expect(r.me(b).notice).toBeNull();
   });
 });
 
@@ -538,13 +702,20 @@ describe('reconnects and membership', () => {
     expect(r.players.get(a)!.name).toBe('ANNA');
   });
 
-  it('cleans and de-duplicates names', () => {
+  it('cleans names, keeps Chinese, keeps duplicates, and falls back to a nickname', () => {
     const r = mkRoom();
     const a = r.join('a', 'totally <21>', 1);
     const b = r.join('b', 'TOTALLY 21', 2);
     expect(r.players.get(a)!.name).toBe('TOTALLY 21');
-    expect(r.players.get(b)!.name).toBe('TOTALLY 21 2');
-    expect(r.players.get(r.join('c', '', 3))!.name).toBe('GUEST');
+    expect(r.players.get(b)!.name).toBe('TOTALLY 21');
+    expect(r.players.get(r.join('z1', '阿哲', 4))!.name).toBe('阿哲');
+    expect(r.players.get(r.join('z2', '  小林 Jay ', 5))!.name).toBe('小林 JAY');
+    expect(r.players.get(r.join('z3', 'Wesley', 6))!.name).toBe('WESLEY');
+    expect(r.players.get(r.join('z4', 'Zoë 🎉', 7))!.name).toBe('ZOE');
+    expect(r.players.get(r.join('z5', '一二三四五六七八', 8))!.name).toBe('一二三四五六'); // 12 cells
+    expect(r.players.get(r.join('z6', 'ABCDEFGHIJKLMNOP', 9))!.name).toBe('ABCDEFGHIJKL');
+    const blank = r.players.get(r.join('c', ' \u3000  ', 3))!.name;
+    expect(NICKNAMES).toContain(blank);
   });
 
   it('a second round starts clean', () => {

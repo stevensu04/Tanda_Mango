@@ -3,9 +3,13 @@ import {
   RULE_IDS, POWER_IDS,
   type RoundPhase, type PlayerState, type Rule, type Micro, type Power, type Settings,
   type Snapshot, type Me, type GameEvent, type PubPlayer, type Reveal, type PhoneRole, type Hud, type Say,
-  type Mugshot, type SoloView,
+  type Mugshot, type SoloView, type VoteChoice, type VoteState, type MyVote, type Notice,
 } from '../../shared/protocol';
 import { Gus } from './gus';
+import { cleanName, cutCells, NICKNAMES, tagText } from '../../shared/text';
+
+/** A player as notices name them: "08 阿哲" (the number tells same-name players apart). */
+const who = (p: { tag: number; name: string }) => (p.tag ? `${tagText(p.tag)} ${p.name}` : p.name);
 import { FALLBACK_SCRIPT, LINES, ASK, fill, pickLine, fallbackRoast, type RoundScript, type RaceState } from '../ai/fallbacks';
 import type { CatchContext, FinaleContext, FinaleResult, MugshotContext, Persona, Roast } from '../ai/types';
 
@@ -18,6 +22,7 @@ import type { CatchContext, FinaleContext, FinaleResult, MugshotContext, Persona
 export interface Player {
   id: string;
   token: string;
+  tag: number;              // short player number shown everywhere; stable for as long as the player exists
   name: string;
   seed: number;
   joinOrder: number;
@@ -39,7 +44,10 @@ export interface Player {
   score: number;
   rushed: boolean;          // came in when the rope snapped
   pushTaps: number;
-  voted: boolean;
+  voted: boolean;           // CROWN vote cast
+  kept: boolean;            // KEEP vote cast
+  notice: Notice | null;    // named result of someone's Lounge power
+  noticeLeft: number;
   tapWindow: number;
   shakeWindow: number;
   connected: boolean;
@@ -80,6 +88,9 @@ export class Room {
   ropeSnapped: boolean | null = null;
   private ownerBeforeVote: string | null = null;
   private voteStart = 0;
+  private voteEnds = 0;    // clock time the vote closes (the round end, or 5 s after an early all-in)
+  allIn = false;           // this round's vote opened early because nobody was left outside
+  private noticeN = 0;
   reveal: Reveal | null = null;
   hud: Hud = { ego: 0.5, paranoia: 0.3, boredom: 0.4, suspicion: 0.1, mono: 'IF ONE MORE GUY SAYS HE KNOWS THE DJ...' };
   script: RoundScript = FALLBACK_SCRIPT;
@@ -120,7 +131,7 @@ export class Room {
     if (existing) {
       const p = this.players.get(existing)!;
       if (this.phase === 'lobby' || this.mode === 'solo') {
-        p.name = this.uniqueName(cleanName(name), existing);
+        p.name = cleanName(name) || p.name;
         p.seed = seed | 0;
       }
       p.connected = true;
@@ -132,7 +143,9 @@ export class Room {
       return only.id;
     }
     const id = `p${++this.joins}`;
-    const p = this.newPlayer(id, token, this.uniqueName(cleanName(name), id), seed | 0, false);
+    // same-name players keep the name they typed: their numbers (03 阿哲, 08 阿哲) tell them apart
+    const p = this.newPlayer(id, token, cleanName(name) || NICKNAMES[Math.floor(this.rand() * NICKNAMES.length)], seed | 0, false);
+    p.tag = this.freeTag();
     // joining mid-round: you start at the back of the line
     if (this.phase !== 'lobby' && this.phase !== 'reveal') p.needFreshPress = true;
     this.players.set(id, p);
@@ -141,11 +154,11 @@ export class Room {
 
   private newPlayer(id: string, token: string, name: string, seed: number, npc: boolean): Player {
     return {
-      id, token, name, seed, joinOrder: this.joins, npc,
+      id, token, tag: 0, name, seed, joinOrder: this.joins, npc,
       x: 0, state: 'outside', holding: false, needFreshPress: true, moving: false,
       micro: 'mash', caughtFor: 0, microTaps: 0, microEnergy: 0, catchNo: 0,
       result: null, resultLeft: 0, nerdLeft: 0,
-      entryOrder: 0, score: 0, rushed: false, pushTaps: 0, voted: false,
+      entryOrder: 0, score: 0, rushed: false, pushTaps: 0, voted: false, kept: false, notice: null, noticeLeft: 0,
       tapWindow: 0, shakeWindow: 0, connected: true, motion: false, latency: 0,
       powerCd: { banana: 0, distract: 0, snitch: 0 },
       stats: { caught: 0, passes: 0, flung: 0, bestMicro: 0, maxX: 0, stillFor: 0, lines: [] },
@@ -153,7 +166,15 @@ export class Room {
     };
   }
 
-  /** Two phones that rolled the same name get told apart on the projector. */
+  /** Lowest player number not held by anyone in the room: 10 phones get 1..10, a leaver's number is reused. */
+  private freeTag(): number {
+    const used = new Set([...this.players.values()].map((p) => p.tag));
+    let n = 1;
+    while (used.has(n)) n++;
+    return n;
+  }
+
+  /** NPC names stay unique (they have no number). */
   private uniqueName(name: string, self: string): string {
     const taken = (n: string) => [...this.players.values()].some((p) => p.id !== self && p.name === n);
     let n = name;
@@ -165,7 +186,8 @@ export class Room {
     const p = this.players.get(id);
     if (!p) return;
     p.connected = on;
-    if (!on) p.holding = false;
+    // a dropped or freshly (re)connected phone has no finger on the button: never leave a stuck hold
+    p.holding = false;
   }
 
   setMotion(id: string, motion: boolean) {
@@ -207,6 +229,7 @@ export class Room {
     this.push = { crowd: 0, defend: 0 };
     this.ropeSnapped = null;
     this.ownerBeforeVote = null;
+    this.allIn = false;
     this.reveal = null;
     this.roasts.clear();
     this.mugshots.clear();
@@ -221,7 +244,8 @@ export class Room {
   private resetPlayer(p: Player) {
     Object.assign(p, {
       x: 0, state: 'outside', holding: false, needFreshPress: true, moving: false, caughtFor: 0, microTaps: 0, microEnergy: 0,
-      result: null, resultLeft: 0, nerdLeft: 0, entryOrder: 0, score: 0, rushed: false, pushTaps: 0, voted: false, catchNo: 0,
+      result: null, resultLeft: 0, nerdLeft: 0, entryOrder: 0, score: 0, rushed: false, pushTaps: 0, voted: false, kept: false, catchNo: 0,
+      notice: null, noticeLeft: 0,
       powerCd: { banana: 0, distract: 0, snitch: 0 },
       stats: { caught: 0, passes: 0, flung: 0, bestMicro: 0, maxX: 0, stillFor: 0, lines: [] },
     });
@@ -232,7 +256,7 @@ export class Room {
     const names = this.script.npcNames.length ? this.script.npcNames : FALLBACK_SCRIPT.npcNames;
     for (let i = 0; i < need; i++) {
       const id = `n${++this.joins}`;
-      const name = this.uniqueName(`${cleanName(names[i % names.length]).slice(0, 8)}`, id);
+      const name = this.uniqueName(cutCells(cleanName(names[i % names.length]) || 'NPC', 8), id);
       const p = this.newPlayer(id, `npc-${id}`, name, Math.floor(this.rand() * 1e6), true);
       p.needFreshPress = false;
       this.players.set(id, p);
@@ -250,6 +274,7 @@ export class Room {
     this.ownerId = null; this.ownerPickLeft = 0;
     this.reveal = null;
     this.ropeSnapped = null;
+    this.allIn = false;
     for (const p of this.players.values()) this.resetPlayer(p);
     this.dropDisconnected();
     this.say(LINES.lobby);
@@ -342,8 +367,17 @@ export class Room {
       if (p.state === 'lounge') this.push.defend++; else this.push.crowd++;
       return;
     }
-    // a vote needs a lift and a fresh tap: taps in the first moments after the rush are leftovers
-    if (this.phase === 'vote' && this.clock >= this.voteStart + T.VOTE_LIFT && !p.voted && this.eligibleVoters().includes(p)) p.voted = true;
+    // a plain tap during the vote is a CROWN vote (the phone sends an explicit `vote`)
+    if (this.phase === 'vote') this.vote(id, 'crown');
+  }
+
+  /** One choice per eligible voter, final. A vote needs a lift and a fresh tap: taps in the first moments are leftovers. */
+  vote(id: string, choice: VoteChoice) {
+    const p = this.players.get(id);
+    if (!p || this.phase !== 'vote' || p.voted || p.kept) return;
+    if (this.clock < this.voteStart + T.VOTE_LIFT || !this.eligibleVoters().includes(p)) return;
+    if (choice === 'crown') p.voted = true;
+    else if (choice === 'keep') p.kept = true;
   }
 
   shake(id: string, e: number) {
@@ -380,21 +414,36 @@ export class Room {
     if (!p || p.state !== 'lounge' || this.phase !== 'play' || !POWER_IDS.includes(power) || p.powerCd[power] > 0) return;
     p.powerCd[power] = T.POWER_COOLDOWN[power];
     let target: Player | null = null;
+    const runners = [...this.players.values()].filter((q) => !q.npc && q.state !== 'lounge');
     if (power === 'banana') {
       const outs = [...this.players.values()].filter((q) => q.state === 'outside' && q.x > 0.05);
       target = outs.length ? outs[Math.floor(this.rand() * outs.length)] : null;
       if (target) target.x = Math.max(0, target.x - T.BANANA_SLIP);
       this.say(fill(target ? LINES.banana : LINES.bananaMiss, { B: p.name, N: target?.name ?? '' }));
+      if (target) {
+        this.notify(p, `YOU TRIPPED ${who(target)}`, 'good');
+        this.notify(target, `${who(p)} TRIPPED YOU`, 'bad');
+      } else this.notify(p, 'MISSED: NOBODY TO TRIP', 'info');
     } else if (power === 'distract') {
       this.gus.distract(T.DISTRACT_FOR);
       this.hud.boredom = Math.min(1, this.hud.boredom + 0.1);
       this.say(fill(LINES.distract, { B: p.name }));
+      this.notify(p, 'YOU DISTRACTED GUS: +1S FOR THE LINE', 'good');
+      for (const q of runners) this.notify(q, `${who(p)} DISTRACTED GUS: +1S`, 'good');
     } else {
       this.gus.extraWatch = Math.min(2, this.gus.extraWatch + T.SNITCH_EXTRA);
       this.hud.suspicion = Math.min(1, this.hud.suspicion + 0.2);
       this.say(fill(LINES.snitch, { B: p.name }));
+      this.notify(p, "YOU SNITCHED: GUS'S NEXT LOOK +1S", 'good');
+      for (const q of runners) this.notify(q, `${who(p)} SNITCHED: NEXT LOOK +1S`, 'bad');
     }
-    this.events.push({ t: 'ev', kind: 'power', power, by: p.name, target: target?.name ?? null, targetId: target?.id ?? null });
+    this.events.push({ t: 'ev', kind: 'power', power, by: p.name, byId: p.id, byTag: p.tag, target: target?.name ?? null, targetId: target?.id ?? null, targetTag: target?.tag ?? 0 });
+  }
+
+  private notify(p: Player, text: string, tone: Notice['tone']) {
+    if (p.npc) return;
+    p.notice = { text, tone, n: ++this.noticeN };
+    p.noticeLeft = 3;
   }
 
   // =================================================================== AI answers
@@ -403,7 +452,7 @@ export class Room {
     this.script = s;
     // NPCs already on the street take the generated names
     const npcs = [...this.players.values()].filter((p) => p.npc);
-    npcs.forEach((p, i) => { if (s.npcNames[i]) p.name = this.uniqueName(cleanName(s.npcNames[i]).slice(0, 8), p.id); });
+    npcs.forEach((p, i) => { if (s.npcNames[i]) p.name = this.uniqueName(cutCells(cleanName(s.npcNames[i]) || p.name, 8), p.id); });
   }
 
   setRoasts(round: number, catchNos: Map<string, number>, roasts: Roast[]) {
@@ -472,7 +521,11 @@ export class Room {
   }
 
   // =================================================================== simulation
-  get timeLeft() { return this.mode === 'solo' ? 0 : Math.max(0, this.settings.roundSecs - this.clock); }
+  get timeLeft() {
+    if (this.mode === 'solo') return 0;
+    if (this.phase === 'vote') return Math.max(0, this.voteEnds - this.clock);
+    return Math.max(0, this.settings.roundSecs - this.clock);
+  }
 
   beamAt(): number | null {
     if (this.rule !== 'lights') return null;
@@ -512,7 +565,7 @@ export class Room {
     const R = this.settings.roundSecs;
     if (this.phase === 'play' && this.clock >= R - T.PUSH - T.VOTE) this.beginPush();
     if (this.phase === 'push' && this.clock >= R - T.VOTE) this.beginVote();
-    if (this.phase === 'vote' && this.clock >= R) { this.finish(); return; }
+    if (this.phase === 'vote' && this.clock >= this.voteEnds) { this.finish(); return; }
 
     if (this.phase === 'play') this.stepGus(dt);
 
@@ -527,8 +580,16 @@ export class Room {
       if (p.npc) this.npcThink(p, dt);
       this.stepPlayer(p, dt);
     }
+    // nobody left outside to rush the rope: skip the empty street and open the vote now
+    if (this.phase === 'play' && this.ownerId && this.nobodyOutside()) this.beginVote(true);
     this.stepHud(dt);
     this.updateRanks();
+  }
+
+  /** True when every connected human is in the lounge (NPCs never get in and don't count). */
+  private nobodyOutside(): boolean {
+    const hs = this.humans.filter((p) => p.connected);
+    return hs.length > 0 && hs.every((p) => p.state === 'lounge');
   }
 
   private tickSolo(dt: number) {
@@ -569,6 +630,7 @@ export class Room {
 
   private stepPlayer(p: Player, dt: number) {
     if (p.resultLeft > 0) { p.resultLeft -= dt; if (p.resultLeft <= 0) p.result = null; }
+    if (p.noticeLeft > 0) { p.noticeLeft -= dt; if (p.noticeLeft <= 0) p.notice = null; }
     for (const k of POWER_IDS) if (p.powerCd[k] > 0) p.powerCd[k] = Math.max(0, p.powerCd[k] - dt);
     if (p.nerdLeft > 0) p.nerdLeft = Math.max(0, p.nerdLeft - dt);
     if (p.state === 'caught') {
@@ -713,23 +775,39 @@ export class Room {
     this.say(LINES.push, 'GUS', true);
   }
 
-  private beginVote() {
-    const outside = [...this.players.values()].filter((p) => p.state !== 'lounge' && (p.connected || p.npc));
-    const lounge = [...this.players.values()].filter((p) => p.state === 'lounge' && p.connected);
-    // per-head comparison so 3 outsiders vs 1 defender is fair; Gus counts as one defender
-    const crowd = this.push.crowd / Math.max(1, outside.length);
-    const defend = this.push.defend / (lounge.length + 1);
-    this.ropeSnapped = outside.some((p) => !p.npc) && crowd > defend;
-    if (this.ropeSnapped) {
-      // simultaneous entrants: furthest along first, then original join order
-      outside.filter((p) => !p.npc).sort((a, b) => b.x - a.x || a.joinOrder - b.joinOrder).forEach((p) => this.admit(p, true));
+  /**
+   * Opens the coup vote. Normally after the rope push; with `allIn` straight from play,
+   * because nobody is left outside to push (no rope contest, a full vote countdown from now).
+   */
+  private beginVote(allIn = false) {
+    if (this.phase === 'vote' || this.phase === 'reveal') return; // never open it twice
+    if (allIn) {
+      this.allIn = true;
+      this.ropeSnapped = null;
+      this.gus.phase = 'watch';
+      for (const p of this.players.values()) { p.holding = false; p.needFreshPress = true; p.result = null; }
+      this.events.push({ t: 'ev', kind: 'allin' });
+      this.say(LINES.allIn, 'GUS', true);
+    } else {
+      const outside = [...this.players.values()].filter((p) => p.state !== 'lounge' && (p.connected || p.npc));
+      const lounge = [...this.players.values()].filter((p) => p.state === 'lounge' && p.connected);
+      // per-head comparison so 3 outsiders vs 1 defender is fair; Gus counts as one defender
+      const crowd = this.push.crowd / Math.max(1, outside.length);
+      const defend = this.push.defend / (lounge.length + 1);
+      this.ropeSnapped = outside.some((p) => !p.npc) && crowd > defend;
+      if (this.ropeSnapped) {
+        // simultaneous entrants: furthest along first, then original join order
+        outside.filter((p) => !p.npc).sort((a, b) => b.x - a.x || a.joinOrder - b.joinOrder).forEach((p) => this.admit(p, true));
+      }
+      this.events.push({ t: 'ev', kind: 'rope', snapped: !!this.ropeSnapped });
+      this.say(this.ropeSnapped ? LINES.ropeSnapped : LINES.ropeHeld, 'GUS', true);
     }
-    this.events.push({ t: 'ev', kind: 'rope', snapped: !!this.ropeSnapped });
-    this.say(this.ropeSnapped ? LINES.ropeSnapped : LINES.ropeHeld, 'GUS', true);
     this.phase = 'vote';
     this.voteStart = this.clock;
+    this.voteEnds = allIn ? this.clock + T.VOTE : Math.max(this.clock, this.settings.roundSecs);
     this.ownerBeforeVote = this.ownerId;
-    for (const p of this.players.values()) p.voted = false;
+    this.ownerPickLeft = 0;
+    for (const p of this.players.values()) { p.voted = false; p.kept = false; }
   }
 
   eligibleVoters(): Player[] {
@@ -737,17 +815,28 @@ export class Room {
     return [...this.players.values()].filter((p) => p.state === 'lounge' && p.id !== this.ownerId && p.connected && !p.npc);
   }
 
-  /** Who takes the seat if the coup succeeds: the earliest-entered supporter. */
-  private successor(): Player | null {
-    const sup = this.eligibleVoters().filter((p) => p.voted).sort((a, b) => a.entryOrder - b.entryOrder);
+  /** Who takes the seat if the coup succeeds: the earliest-entered supporter (optionally counting `extra` as one). */
+  private successor(extra?: Player): Player | null {
+    const sup = this.eligibleVoters().filter((p) => p.voted || p === extra).sort((a, b) => a.entryOrder - b.entryOrder);
     return sup[0] ?? null;
   }
 
-  private voteState() {
+  private voteState(): VoteState {
     const eligible = this.eligibleVoters();
     const cast = eligible.filter((p) => p.voted).length;
+    const kept = eligible.filter((p) => p.kept).length;
     const needed = Math.floor(eligible.length / 2) + 1; // strict majority
-    return { cast, needed, eligible: eligible.length, successorName: this.successor()?.name ?? null };
+    const s = this.successor();
+    return { cast, kept, needed, eligible: eligible.length, successorId: s?.id ?? null, successorName: s?.name ?? null, successorTag: s?.tag ?? 0 };
+  }
+
+  /** The phone's vote card: what a CROWN tap from this player would do right now. */
+  private myVote(p: Player | undefined): MyVote | null {
+    if (this.phase !== 'vote') return null;
+    const v = this.voteState();
+    const eligible = !!p && this.eligibleVoters().includes(p);
+    const ifc = eligible && !p!.kept ? this.successor(p) : null;
+    return { ...v, choice: p?.voted ? 'crown' : p?.kept ? 'keep' : null, ifCrownId: ifc?.id ?? null, ifCrownName: ifc?.name ?? null, ifCrownTag: ifc?.tag ?? 0 };
   }
 
   private finish() {
@@ -763,7 +852,7 @@ export class Room {
     const hs = this.humans;
     const ranked = hs.slice()
       .sort((a, b) => (b.id === winner?.id ? 1 : 0) - (a.id === winner?.id ? 1 : 0) || b.score - a.score || a.joinOrder - b.joinOrder);
-    const ranking = ranked.map((p) => ({ id: p.id, name: p.name, score: p.score }));
+    const ranking = ranked.map((p) => ({ id: p.id, tag: p.tag, name: p.name, score: p.score }));
     const first = hs.find((p) => p.entryOrder === 1);
     const mostCaught = hs.slice().sort((a, b) => b.stats.caught - a.stats.caught)[0];
     const bestMicro = hs.slice().sort((a, b) => b.stats.bestMicro - a.stats.bestMicro)[0];
@@ -775,8 +864,13 @@ export class Room {
     this.reveal = {
       winnerId: winner?.id ?? null,
       winnerName: winner?.name ?? null,
+      winnerTag: winner?.tag ?? 0,
       prevOwnerName,
+      prevOwnerTag: prevOwnerName ? prev?.tag ?? 0 : 0,
+      ownerBeforeVote: prev?.name ?? null,
       ropeSnapped: !!this.ropeSnapped,
+      allIn: this.allIn,
+      vote: v.eligible > 0 ? { cast: v.cast, kept: v.kept, needed: v.needed, eligible: v.eligible } : null,
       ranking,
       awards,
       toast,
@@ -856,10 +950,10 @@ export class Room {
 
   private pub(p: Player): PubPlayer {
     return {
-      id: p.id, name: p.name, seed: p.seed, x: p.x, state: p.state, moving: p.moving, caught: p.state === 'caught',
+      id: p.id, tag: p.tag, name: p.name, seed: p.seed, x: p.x, state: p.state, moving: p.moving, caught: p.state === 'caught',
       micro: p.state === 'caught' ? p.micro : null, microScore: p.state === 'caught' ? this.microScore(p) : 0,
       microLeft: p.state === 'caught' ? Math.max(0, T.MICRO - p.caughtFor) : 0,
-      entryOrder: p.entryOrder, score: p.score, voted: p.voted, npc: p.npc, nerd: p.nerdLeft > 0, connected: p.connected,
+      entryOrder: p.entryOrder, score: p.score, voted: p.voted, kept: p.kept, npc: p.npc, nerd: p.nerdLeft > 0, connected: p.connected,
     };
   }
 
@@ -883,6 +977,7 @@ export class Room {
       players: all.filter((p) => p.connected || p.npc || this.phase !== 'lobby').map((p) => this.pub(p)),
       push: this.phase === 'push' ? { ...this.push, outside, lounge } : null,
       ropeSnapped: this.ropeSnapped,
+      allIn: this.allIn,
       vote: this.phase === 'vote' ? this.voteState() : null,
       reveal: this.reveal,
       hud: this.hud,
@@ -931,6 +1026,7 @@ export class Room {
       t: 'me',
       code: this.mode === 'party' ? this.code : null,
       id: p?.id ?? null,
+      tag: p?.tag ?? 0,
       role: this.role(p),
       phase: this.phase,
       timeLeft: this.timeLeft,
@@ -951,12 +1047,15 @@ export class Room {
       nerdLeft: p?.nerdLeft ?? 0,
       isOwner: !!p && p.id === this.ownerId,
       ownerName: this.ownerId ? this.players.get(this.ownerId)?.name ?? null : null,
+      ownerTag: this.ownerId ? this.players.get(this.ownerId)?.tag ?? 0 : 0,
       ownerPickLeft: Math.max(0, this.ownerPickLeft),
       ruleChoices: this.ruleChoices,
       powers: p ? POWER_IDS.map((k) => ({ power: k, cd: p.powerCd[k] })) : [],
       pushTaps: p?.pushTaps ?? 0,
       voted: p?.voted ?? false,
-      vote: this.phase === 'vote' ? this.voteState() : null,
+      vote: this.myVote(p),
+      allIn: this.allIn,
+      notice: p?.notice ?? null,
       rank: p ? this.rankCache.get(p.id) ?? humans : 0,
       total: humans,
       score: p?.score ?? 0,
@@ -968,7 +1067,4 @@ export class Room {
   }
 }
 
-export function cleanName(s: string): string {
-  const up = String(s ?? '').toUpperCase().replace(/[^A-Z0-9 .'!?-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 12);
-  return up || 'GUEST';
-}
+export { cleanName };

@@ -53,61 +53,94 @@ dt { color: var(--dim); } dd { margin: 0; text-align: right; }
 .err { color: var(--alert); word-break: break-word; }
 @media (max-width: 700px) { td, th { padding: 6px 3px; } .bar { width: 44px; } td button { padding: 2px 6px; } body { padding: 8px; } }
 .hide { display: none !important; }
+.code { font-size: 40px; letter-spacing: 6px; color: var(--lamp); }
+a.btn { display: inline-block; text-decoration: none; padding: 10px 16px; border: 2px solid var(--safe); background: var(--safe); color: var(--night); font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
+.first { display: grid; gap: 12px; }
+.qrrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#qr { background: #fff; padding: 6px; width: 132px; height: 132px; image-rendering: pixelated; }
+.joined { font-size: 22px; } .joined b { color: var(--safe); }
+#start { font-size: 20px; min-height: 56px; }
+details { background: var(--panel); border: 2px solid var(--line); padding: 10px 12px; margin-bottom: 12px; }
+summary { cursor: pointer; color: var(--lamp); letter-spacing: 2px; text-transform: uppercase; font-size: 12px; }
+.secondary { background: transparent; border-style: dashed; }
 </style></head>
 <body>
 <header><h1>CLUB VELVET / HOST</h1><span id="conn" class="status down">RECONNECTING…</span></header>
-<div id="nokey" class="banner hide">ANTHROPIC_API_KEY missing — Gus is using scripted lines. Copy .env.example to .env and add the key, then restart.</div>
 
-<section>
-  <h2>Room</h2>
-  <div id="rooms" class="row"></div>
-  <form id="codeform" class="row" style="margin-top:8px">
-    <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" size="6" />
-    <button type="submit">Open room</button>
+<section id="landing" class="hide">
+  <h2>Host</h2>
+  <div class="row"><button id="goCreate" class="go">Create a game</button><button id="goReturn">Return to my game</button></div>
+</section>
+
+<section id="create" class="hide">
+  <h2>Create a game</h2>
+  <form id="createform">
+    <label class="t" for="newpw">Choose a room password</label>
+    <div class="row" style="margin-top:6px"><input id="newpw" type="password" autocomplete="new-password" size="18" />
+      <button type="button" class="showpw" data-for="newpw">Show</button>
+      <button type="submit" class="go">Create</button></div>
   </form>
+  <div class="dim" style="margin-top:8px">Anything works. You need it to get back into this room's dashboard.</div>
+  <div id="createerr" class="err" style="margin-top:8px"></div>
+  <button type="button" class="back" style="margin-top:10px">Back</button>
+</section>
+
+<section id="return" class="hide">
+  <h2 id="welcome">Return to my game</h2>
+  <form id="returnform">
+    <div class="row" id="coderow"><label for="retcode">Room code</label><input id="retcode" maxlength="4" size="6" autocomplete="off" autocapitalize="characters" placeholder="ABCD" /></div>
+    <div class="row" style="margin-top:6px"><label for="retpw">Password</label><input id="retpw" type="password" autocomplete="current-password" size="18" />
+      <button type="button" class="showpw" data-for="retpw">Show</button>
+      <button type="submit" class="go">Unlock</button></div>
+  </form>
+  <div id="returnerr" class="err" style="margin-top:8px"></div>
+  <button type="button" class="back" style="margin-top:10px">Back</button>
 </section>
 
 <div id="roomui" class="hide">
-  <section>
-    <h2>Round — <span id="rcode"></span></h2>
-    <div class="big"><span class="phase" id="phase">—</span><span class="time" id="time">0:00</span></div>
-    <div class="row">
-      <button id="start" class="go">START ROUND</button>
-      <button id="reset" class="warn">RESET TO LOBBY</button>
-    </div>
-    <div class="links dim">
-      <div>PROJECTOR: <a id="lscreen" target="_blank" rel="noopener"></a></div>
-      <div>PHONES: <a id="lphone" target="_blank" rel="noopener"></a></div>
-    </div>
+  <section class="first">
+    <div class="code">ROOM <span id="rcode"></span></div>
+    <div class="row"><a id="openproj" class="btn" target="_blank" rel="noopener">Open projector</a><span id="screens" class="dim"></span></div>
+    <div class="qrrow"><canvas id="qr" width="132" height="132"></canvas><div><div class="dim">PLAYERS SCAN OR OPEN</div><a id="lphone" target="_blank" rel="noopener"></a></div></div>
+    <div class="joined">Joined: <b id="pcount">0</b></div>
+    <div class="big"><span class="phase" id="phase">—</span><span class="time" id="time"></span></div>
+    <button id="start" class="go">START ROUND</button>
   </section>
 
-  <div class="grid2">
-    <section>
-      <h2>Settings</h2>
-      <div class="set"><label class="t">Round length</label>
-        <span id="lens"></span>
-        <div class="dim" id="lennote">Locked while a round is running.</div></div>
-      <div class="set"><label class="t" for="diff">Difficulty: <b id="difflabel"></b></label>
-        <input id="diff" type="range" min="0.6" max="1.4" step="0.1" /></div>
-      <div class="set"><label class="opt"><input id="npcs" type="checkbox" /> NPC fill (pads small rooms)</label></div>
-      <div class="set"><label class="opt"><input id="ai" type="checkbox" /> Claude lines</label>
-        <div class="dim">Off = scripted lines only. Also the way to rehearse "Claude unreachable".</div></div>
-    </section>
-    <section>
-      <h2>Claude</h2>
-      <dl id="claude"></dl>
-      <div id="lasterr" class="err" style="margin-top:8px"></div>
-    </section>
-  </div>
-
   <section>
-    <h2>Players (<span id="pcount">0</span>)</h2>
+    <h2>Players</h2>
     <div class="tablewrap"><table>
       <thead><tr><th></th><th>NAME</th><th>STATE</th><th>SCORE</th><th>PROGRESS</th><th></th></tr></thead>
       <tbody id="players"></tbody></table></div>
     <div id="noplayers" class="dim">No players yet.</div>
   </section>
+
+  <details>
+    <summary>Settings</summary>
+    <div id="nokey" class="banner hide" style="margin-top:10px">ANTHROPIC_API_KEY missing — Gus is using scripted lines.</div>
+    <div class="grid2" style="margin-top:10px">
+      <div>
+        <div class="set"><label class="t">Round length</label>
+          <span id="lens"></span>
+          <div class="dim" id="lennote">Locked while a round is running.</div></div>
+        <div class="set"><label class="t" for="diff">Difficulty: <b id="difflabel"></b></label>
+          <input id="diff" type="range" min="0.6" max="1.4" step="0.1" /></div>
+        <div class="set"><label class="opt"><input id="npcs" type="checkbox" /> NPC fill (pads small rooms)</label></div>
+        <div class="set"><label class="opt"><input id="ai" type="checkbox" /> Claude lines</label>
+          <div class="dim">Off = scripted lines only.</div></div>
+      </div>
+      <div>
+        <h2>Claude cost and diagnostics</h2>
+        <dl id="claude"></dl>
+        <div id="lasterr" class="err" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </details>
+
+  <section class="secondary row">
+    <button id="reset" class="warn">Reset to lobby</button>
+    <button id="leave">Lock dashboard</button>
+  </section>
 </div>
-<div id="noroom" class="hide section dim">Pick a room above. Rooms are created when a projector (/screen.html) opens.</div>
 <script type="module" src="/src/admin.ts"></script>
 </body></html>

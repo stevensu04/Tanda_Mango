@@ -1,15 +1,55 @@
-/** Square-wave chip sounds. Browsers need one user gesture first: call unlock() on pointerdown. */
+/**
+ * Square-wave chip sounds, plus the mixer every sound goes through. Browsers need one user gesture
+ * first: call unlock() on pointerdown.
+ *
+ *   source -> group gain (amb | gus | alert) -> master -> speakers
+ *
+ * Phones only ever use the alert group at full volume. The projector sets the three group volumes
+ * and the master mute from its sound panel (see web/src/club-audio.ts).
+ */
 let ac: AudioContext | null = null;
 let muted = false;
+export type Group = 'amb' | 'gus' | 'alert';
+const level: Record<Group | 'master', number> = { amb: 1, gus: 1, alert: 1, master: 1 };
+let master: GainNode | null = null;
+const groups: Partial<Record<Group, GainNode>> = {};
 
 export function unlock() {
   if (!ac) ac = new AudioContext();
   if (ac.state === 'suspended') void ac.resume();
 }
-export function setMuted(m: boolean) { muted = m; }
+/** The shared AudioContext (null until the first gesture). */
+export const audio = () => ac;
+/** True once the browser lets us play (after a gesture on this page load). */
+export const audioRunning = () => !!ac && ac.state === 'running';
+
+function masterNode(): GainNode {
+  if (!master) { master = ac!.createGain(); master.gain.value = muted ? 0 : level.master; master.connect(ac!.destination); }
+  return master;
+}
+/** Where a sound of this group should connect. */
+export function out(g: Group): AudioNode {
+  let n = groups[g];
+  if (!n) { n = ac!.createGain(); n.gain.value = level[g]; n.connect(masterNode()); groups[g] = n; }
+  return n;
+}
+/** The master output (recording taps here). */
+export const masterOut = () => (ac ? masterNode() : null);
+export function setLevel(g: Group | 'master', v: number) {
+  level[g] = Math.max(0, Math.min(1, v));
+  if (!ac) return;
+  const node = g === 'master' ? master : groups[g];
+  if (node) node.gain.setTargetAtTime(g === 'master' && muted ? 0 : level[g], ac.currentTime, 0.02);
+}
+export const getLevel = (g: Group | 'master') => level[g];
+export function setMuted(m: boolean) {
+  muted = m;
+  if (ac && master) master.gain.setTargetAtTime(m ? 0 : level.master, ac.currentTime, 0.02);
+}
+export const isMuted = () => muted;
 
 function tone(freq: number, dur: number, when = 0, type: OscillatorType = 'square', vol = 0.06) {
-  if (!ac || muted) return;
+  if (!ac) return;
   const t0 = ac.currentTime + when;
   const o = ac.createOscillator();
   const g = ac.createGain();
@@ -17,13 +57,13 @@ function tone(freq: number, dur: number, when = 0, type: OscillatorType = 'squar
   o.frequency.setValueAtTime(freq, t0);
   g.gain.setValueAtTime(vol, t0);
   g.gain.setValueAtTime(0, t0 + dur); // hard stop, no fade: it's a chip
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(out('alert'));
   o.start(t0);
   o.stop(t0 + dur + 0.01);
 }
 
 function noise(dur: number, vol = 0.05) {
-  if (!ac || muted) return;
+  if (!ac) return;
   const len = Math.floor(ac.sampleRate * dur);
   const buf = ac.createBuffer(1, len, ac.sampleRate);
   const d = buf.getChannelData(0);
@@ -33,7 +73,7 @@ function noise(dur: number, vol = 0.05) {
   const g = ac.createGain();
   g.gain.value = vol;
   s.buffer = buf;
-  s.connect(g).connect(ac.destination);
+  s.connect(g).connect(out('alert'));
   s.start();
 }
 

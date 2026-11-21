@@ -22,7 +22,7 @@ One WebSocket per client on `/ws` (same origin as the pages), JSON messages, max
 
 ## Phone intents
 
-`join {name, seed}` · `caps {motion}` · `press` / `release` (hold to sneak) · `tap` (Mash, rope push, coup vote) · `shake {e}` (0..1 energy per ~100 ms, max 14/s) · `rule {rule}` (owner) · `power {power}` (lounge) · `pong {n}` · `solo {op:'start', level}` / `solo {op:'menu'}`.
+`join {name, seed}` · `caps {motion}` · `press` / `release` (hold to sneak) · `tap` (Mash, rope push; during the vote a tap counts as CROWN) · `vote {choice: 'crown'|'keep'}` (one per player, final; ignored for the first 0.4 s of the vote) · `shake {e}` (0..1 energy per ~100 ms, max 14/s) · `rule {rule}` (owner) · `power {power}` (lounge) · `pong {n}` · `solo {op:'start', level}` / `solo {op:'menu'}`.
 
 Projector and host: `start`, `reset`. Host only: `kick {id}`, `settings {roundSecs?, difficulty?, npcs?, ai?}`.
 
@@ -33,10 +33,12 @@ lobby ─start─► play (Gus: back → tell → [fake-out] → watch → back 
                 │ caught → 5 s challenge (Mash or Shake) → pass: keep spot +step | fail: flung to start
                 │ first through the rope = owner → picks 1 of 3 rules in 12 s (auto-pick on timeout)
                 │ nobody in by 35 s → Gus naps 4 s
+                │ everyone connected is in → skip the rope: vote opens at once for 5 s ("EVERYONE'S IN")
                 ▼ roundSecs − 15
               push (10 s: outside taps to break the rope, lounge taps to hold it)
                 ▼ roundSecs − 5
-              vote (5 s: lounge members except the owner vote a coup; strict majority)
+              vote (5 s: lounge members except the owner pick CROWN or KEEP; strict majority of
+                    those eligible; the earliest-entered CROWN voter takes the crown)
                 ▼ roundSecs
               reveal (one VIP, ranking crown-first, awards, mugshots) ─start─► play / ─reset─► lobby
 ```

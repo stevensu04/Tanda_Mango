@@ -79,14 +79,14 @@ export const isBanned = (s: string) => BANNED.some((re) => re.test(s));
 /** Map to the glyph set, uppercase, collapse whitespace. No length limits. */
 export function toGlyphs(s: unknown): string {
   return String(s ?? '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')       // strip accents: É -> E
+    .normalize('NFKC')
+    .replace(/[À-ɏ]/g, (ch) => ch.normalize('NFD').replace(/[̀-ͯ]/g, '')) // strip accents: É -> E
     .toUpperCase()
     .replace(/[‘’‛′`"“”]/g, "'")
     .replace(/[–—−]/g, '-')
     .replace(/…/g, '...')
     .replace(/&/g, ' AND ')
-    .replace(/[^A-Z0-9 .,'!?\-:()]/g, ' ')
+    .replace(/[^A-Z0-9 .,'!?\-:()\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー々]/gu, ' ') // keep Chinese names
     .replace(/\s+/g, ' ')
     .trim();
 }
