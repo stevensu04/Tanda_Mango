@@ -2,20 +2,98 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#1d1633" />
   <title>CLUB VELVET</title>
   <style>
-    body { margin: 0; min-height: 100vh; background: #1d1633; color: #f4ecd6; font: 16px ui-monospace, monospace; display: grid; place-content: center; gap: 12px; }
-    a { color: #ff4f9a; }
-    p { color: #a69cc9; max-width: 34ch; }
+    @font-face { font-family: ClubPixel; src: url(/fonts/fusion-pixel-10px-zh_tw.woff2) format('woff2'); font-display: swap; }
+    :root {
+      --ink: #0e0a1a; --night: #1d1633; --asphalt: #2e2350; --asphalt-hi: #463a6e; --stone-hi: #a69cc9;
+      --paper: #f4ecd6; --velvet: #c4304f; --neon: #ff4f9a; --lamp: #ffd25e; --alert: #ff4a3d;
+      --pix: ClubPixel, ui-monospace, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--ink); }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100svh;
+      background: radial-gradient(120% 60% at 50% 0%, var(--asphalt) 0%, var(--night) 55%, var(--ink) 100%);
+      color: var(--paper); font: 16px/1.4 system-ui, -apple-system, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    main {
+      width: 100%; max-width: 420px; margin: 0 auto;
+      padding: max(16px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    #art {
+      display: block; width: 100%; height: auto; max-height: 30svh; object-fit: cover;
+      aspect-ratio: 2 / 1; image-rendering: pixelated; border: 3px solid var(--ink);
+      box-shadow: 0 0 0 2px var(--velvet), 0 10px 30px #0008; background: var(--night);
+    }
+    h1 {
+      margin: 4px 0 0; font: 40px/1 var(--pix); letter-spacing: 2px; text-align: center;
+      color: var(--neon); text-shadow: 3px 3px 0 var(--ink), 0 0 14px #ff4f9a88;
+    }
+    .tag { margin: 0; text-align: center; font: 20px/1.3 var(--pix); color: var(--lamp); }
+    form { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+    label { font: 20px/1 var(--pix); color: var(--stone-hi); }
+    #code {
+      width: 100%; height: 64px; padding: 0 12px; border: 3px solid var(--stone-hi); border-radius: 0;
+      background: var(--ink); color: var(--paper); caret-color: var(--neon);
+      font: 40px/1 var(--pix); letter-spacing: 0.5em; text-indent: 0.5em; text-align: center; text-transform: uppercase;
+      -webkit-appearance: none; appearance: none;
+    }
+    #code::placeholder { color: var(--asphalt-hi); }
+    #code:focus { outline: none; border-color: var(--lamp); box-shadow: 0 0 0 3px #ffd25e55; }
+    #code[aria-invalid="true"] { border-color: var(--alert); }
+    #hint { margin: 0; min-height: 1.4em; font-size: 15px; color: var(--stone-hi); }
+    #hint.bad { color: #ff8a7d; font-weight: 600; }
+    #go {
+      height: 60px; border: 3px solid var(--ink); border-radius: 0; cursor: pointer;
+      background: var(--neon); color: var(--ink); font: 30px/1 var(--pix);
+      box-shadow: 0 5px 0 var(--velvet), 0 5px 0 3px var(--ink); margin-bottom: 8px;
+      touch-action: manipulation;
+    }
+    #go:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--velvet), 0 1px 0 3px var(--ink); }
+    #go:disabled { background: var(--stone-hi); cursor: progress; }
+    #go:focus-visible, .solo:focus-visible { outline: 3px solid var(--lamp); outline-offset: 3px; }
+    .or { display: flex; align-items: center; gap: 10px; margin: 6px 0 0; color: var(--asphalt-hi); font-size: 13px; }
+    .or::before, .or::after { content: ''; flex: 1; height: 2px; background: var(--asphalt); }
+    .solo {
+      display: block; padding: 12px; text-align: center; text-decoration: none;
+      border: 2px solid var(--asphalt-hi); color: var(--paper); font: 20px/1 var(--pix);
+    }
+    .solo small { display: block; margin-top: 6px; font: 13px/1.2 system-ui, sans-serif; color: var(--stone-hi); }
+    /* Keyboard up: Android shrinks the page (max-height), iOS overlays it (home.ts adds .kb). */
+    @media (max-height: 520px) {
+      main { gap: 8px; padding-top: 10px; }
+      #art, .or, .solo { display: none; }
+      h1 { font-size: 30px; }
+    }
+    .kb main { gap: 8px; padding-top: 10px; }
+    .kb #art, .kb .or, .kb .solo { display: none; }
+    .kb h1 { font-size: 30px; }
+    @media (min-width: 700px) and (min-height: 700px) {
+      main { max-width: 460px; padding-top: 7vh; }
+    }
   </style>
 </head>
 <body>
-  <h1>CLUB VELVET</h1>
-  <a href="/screen.html">/screen &mdash; projector</a>
-  <a href="/play.html">/play &mdash; phone (no room code = solo gauntlet)</a>
-  <a href="/admin.html">/admin &mdash; host controls</a>
-  <a href="/reference.html">/reference &mdash; style sheet</a>
-  <p>Open the projector first: it creates a room and shows the QR code. Design previews: screen.html?preview and play.html?preview.</p>
+  <main>
+    <canvas id="art" width="224" height="112" role="img" aria-label="Gus the bouncer at the velvet rope outside Club Velvet"></canvas>
+    <h1>CLUB VELVET</h1>
+    <p class="tag">Hold to sneak. Let go when Gus turns.</p>
+    <form id="join" action="play.html" method="get" novalidate autocomplete="off">
+      <label for="code">Room code</label>
+      <input id="code" name="room" type="text" inputmode="text" maxlength="40" placeholder="ABCD"
+             autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go"
+             aria-describedby="hint" />
+      <p id="hint" aria-live="polite">The code is on the big screen.</p>
+      <button id="go" type="submit">Join room</button>
+    </form>
+    <p class="or">or</p>
+    <a class="solo" href="play.html">Play solo<small>No code needed</small></a>
+  </main>
+  <script type="module" src="/src/home.ts"></script>
 </body>
 </html>
