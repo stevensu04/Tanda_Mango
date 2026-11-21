@@ -12,7 +12,17 @@ The Phase 1 prototype includes interactive phone and projector pages. The table 
 | **Moonwalk · Owner preview** | Selected Owner in the dev menu and tapped **Moonwalk**. The card turned gold and Gus confirmed **Rule set: Moonwalk**. The card describes the effect as **Controls flip**. | The separately selected projector preview displayed **Moonwalk**. The ordinary sneaker view still read **Hold to sneak**. The owner selection did not update the other screens’ instructions or demonstrate reversed movement. |
 | **Rush and crown · separate previews** | Five taps in Mosh produced **5 pushes**. In the Lounge preview, tapping the crown started a 15-second cooldown. | The rush preview showed the crowd meter and **Rope snapped!**. The results preview led with **First in**. The phone inputs did not establish who took the throne. |
 
-**Next linked playtest.** When an owner activates Moonwalk, show **Release to move** on the projector and **Hold to freeze** under each outside player’s thumb. For the finale, Jonathan’s rule awards the crown to whoever holds the seat at the buzzer. Test a round where the first entrant loses the seat and check that both screens identify the same final owner. The five-second coup vote below is a proposed experiment.
+### Connection check and four-phone acceptance test
+
+**Checked at `4c279b0`.** The projector QR opened the phone page. The lobby populated itself from a timed mock crowd, each phone handled its own controls, and the projector read a fixed results list. A linked four-phone round was therefore still unverified at this revision.
+
+**Pending acceptance test.** Open one projector and have four independent phone sessions join through its QR. Choose four distinct names. Run all three checks in the same round using the player controls.
+
+| Check | Action and pass condition |
+| --- | --- |
+| Lobby identity | Join one phone at a time. After each join, the projector adds that phone’s chosen name exactly once and increments the human player count by one. At the fourth join, all four names are visible and the human count is four. Any NPCs are labelled separately. |
+| Moonwalk handoff | Let one player become owner while the three outside players hold Sneak. Activate Moonwalk once on the owner’s phone. The projector names the owner and shows **Release to move**. All three outside phones immediately show **Release to move** and relabel the held control **Hold to freeze**. During a safe movement phase, verify on each phone that holding stops its avatar and releasing moves it. In a first-time player session, record how many of the three release before Gus turns without a spoken hint. |
+| One VIP at the buzzer | Have a different player take the seat before time expires. Record the final owner’s name. The projector reveals that player on the throne, and all four result screens identify the same VIP. Only the winner sees **You’re Tonight’s VIP**. Each of the other three phones shows its own finishing rank. The proposed five-second vote below is one way to test a transfer. |
 
 ## Jonathan’s planned gameplay
 
