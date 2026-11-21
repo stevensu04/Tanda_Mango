@@ -42,11 +42,21 @@ These are proposed experiments. Jonathan’s agreed rules are described above an
 
 This experiment gives a late entrant a route to the throne and reserves five seconds of the rush for the vote. The succession rule during that vote is a proposed change to Jonathan’s next-entrant rule. For a fair first test, show the prospective successor as votes arrive so players can see whom their tap would help.
 
-### Other suggestions to try
+### Phone and projector design notes for Claude
 
-- Make the sneak button easy to hold by touch while watching Gus on the projector. Give every genuine turn the same final visual cue.
-- After a microgame, return the player to the street standing still. Let a fresh press resume movement so reading the result cannot trigger another catch.
-- Try Moonwalk as the only VIP power in the first test. Show who activated it and the changed control on the projector. Watch whether the other players notice and react.
+**Jonathan’s rules.** Moonwalk reverses the sneak controls. A catch starts a five-second challenge for that player while the room keeps playing. The player holding the owner seat at the buzzer is Tonight’s VIP.
+
+**Four-player playtest proposals.** The paired displays below are suggested treatments. The five-second vote uses the experimental finale above. Use the players’ actual names in place of Priya and Dave.
+
+| Moment | Phone | Projector |
+| --- | --- | --- |
+| Moonwalk starts | Keep the control under the same thumb. Change its label to **Hold to freeze** and show the avatar move on release. Restore the ordinary label when the rule ends. | Show **Priya picked Moonwalk** and **Release to move** together the instant the rule changes. Keep Gus and his turn cue visible while the announcement is up. |
+| Gus catches Dave | Only Dave gets the challenge. Show one action, such as **Tap to bribe**, with its meter and five-second countdown. On return, show the result and wait for a fresh press to resume. Other phones keep their street controls. | Keep the red sweep and Gus’s turn pose. Put **Dave — caught** on a solid nameplate pointing to his avatar so the name stays legible over the patterned street. |
+| Crowd rush | Outside players see **Break the rope**. Lounge players see **Defend the rope**. Keep each action in the same thumb position. | Show the crowd and defenders on opposite ends of the meter, with time left and the current crown holder visible. Announce whether the rope held before changing screens. |
+| Experimental final vote | An eligible challenger sees **Support coup** and gets one tap. Require a lift and a fresh tap after the rush. Confirm the vote. The owner sees **Defending your crown** and any player still outside sees **Outside the lounge**. | Replace the rush meter with the owner’s name, votes cast and needed, and seconds left. As support arrives, show who would take the seat under the proposed succession rule. |
+| Buzzer | Give the winner **You’re Tonight’s VIP** and everyone else their personal finishing rank. | Reveal the crowned player on the throne first. If ownership changed, name both players, e.g. **Dave took the crown from Priya**. Show fastest entry and other side awards after the reveal. |
+
+For the first run, offer Moonwalk as the sole VIP power. Use the same final visual cue on every genuine turn and keep the phone control large enough to hold while looking up. Hide the projector’s development toolbar during the session so it cannot cover the timer or crown.
 
 ### Four-player playtest
 
@@ -60,4 +70,4 @@ Recruit four first-time players. Let them attempt one round with only the on-scr
 | Final rush and vote | Record the owner before the rush, who gets in, who votes and who receives the crown. Note any player tapping to push after voting has opened or trying to vote from outside. |
 | Throne reveal | Before anyone discusses the result, ask each person “Who won, and why?” and “From your position, what could you do in the last ten seconds?” Compare all four answers with the events you recorded. |
 
-Run the finale again with the opposite rope outcome. Revise the first cue or rule that players misunderstood, then retest that moment with fresh players.
+Include one run where the first entrant loses the throne. Ask each player whom their last tap helped before revealing the input record. Run the finale again with the opposite rope outcome. Revise the first cue or rule that players misunderstood, then retest that moment with fresh players.
