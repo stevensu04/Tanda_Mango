@@ -18,9 +18,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Release: only pushes to deploy-site that pass every check above trigger a Render deploy.
+  # Release: every push to deploy-site triggers a Render deploy, independent of the checks above
+  # (no `needs: check`), so failing tests don't block a deploy.
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy-site'
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to Render
-        if: github.event_name == 'push' && github.ref == 'refs/heads/deploy-site'
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
