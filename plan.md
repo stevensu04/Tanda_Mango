@@ -438,6 +438,8 @@ Order: **0 → (1, 2, 3, 4 in parallel) → integrate Tier A → Tier B → 5 (T
 - With Claude unreachable, the game still plays using the fallbacks.
 - All tests are green. No console errors on screen or phone.
 
+> **Status (21 November 2026): met in automated runs on localhost.** Evidence and the remaining real-device checks are in the README's "Phase 2 status". Built: Tier A in full; from Tier B, the finale, TTS, the brain HUD with commentary, lounge powers (Banana, Distract, Snitch), NICE TRY NERD, repeat-offender callouts and the mugshot PNG. Not built: Freeze!/Dodge, phone sabotage, the mid-round coup meter, and all of Tier C. Transport is plain `ws` instead of Socket.IO (docs/PROTOCOL.md).
+
 ---
 
 ## 4. Phase 3: Deployment (free)

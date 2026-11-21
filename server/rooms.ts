@@ -192,7 +192,8 @@ export function attachGame(http: HttpServer, opts: { voice: GameVoice; speed?: n
       if (evs.length) for (const [ws, c] of clients) if (c.room === room && c.role === 'screen') for (const e of evs) send(ws, e);
     }
     if (snapAcc >= 1 / T.SNAP_HZ) {
-      snapAcc = 0;
+      // carry the remainder: 20 Hz ticks then give a steady 15 Hz (resetting to 0 would give 10 Hz)
+      snapAcc = Math.min(snapAcc - 1 / T.SNAP_HZ, 1 / T.SNAP_HZ);
       const snaps = new Map<Room, ServerMsg>();
       for (const [ws, c] of clients) {
         if (!c.room) continue;

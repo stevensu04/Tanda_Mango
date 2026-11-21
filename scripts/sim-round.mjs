@@ -50,7 +50,7 @@ await new Promise((res) => { const iv = setInterval(() => { if (screen.code) { c
 const CODE = screen.code;
 log(`room ${CODE}`);
 log(`projector: http://${HOST}/screen.html?room=${CODE}`);
-log(`phones:    http://${HOST}/?room=${CODE}`);
+log(`phones:    http://${HOST}/play.html?room=${CODE}`);
 await new Promise((r) => setTimeout(r, 300));
 if (screen.snap && screen.snap.phase !== 'lobby') { sws.send(JSON.stringify({ t: 'reset' })); await new Promise((r) => setTimeout(r, 300)); }
 

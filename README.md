@@ -4,38 +4,82 @@
 
 ## Phase 2 status · 21 November 2026
 
-This inventory covers Claude’s local linked build. At the time of review, the published game on main was still the Phase 1 preview. Jonathan’s Phase 2 completion criteria are in [the build plan, §3.8](./plan.md#38-definition-of-done-phase-2).
+Phase 2 is built on localhost and its [definition of done (§3.8)](./plan.md#38-definition-of-done-phase-2) is met in automated runs. Real phones, the venue network and the room's speakers have not been tested yet; those checks are listed below.
 
-| Status | What the team can count on |
+| §3.8 criterion | Evidence |
 | --- | --- |
-| **Playable locally** | Four simulated phones can join, sneak, activate Moonwalk, push or defend the rope, vote and see the same winner. The linked catch challenge supports Mash. The finale runs for 10 seconds of pushing and 5 seconds of voting. See the observed results below. |
-| **Implemented, needs physical-device acceptance** | Check QR entry on venue Wi-Fi, iOS Safari and Android Chrome. Lock and reopen a phone, then refresh mid-round and verify its name and position. Test warning and fake-out timing, catch fairness and haptics. Record actual first entry time against the 35-second target. The server’s four-second nap gives stragglers an opening. |
-| **Preview or partial implementation** | The linked owner console offers Moonwalk. Other chaos rules, Shake and several lounge powers have design previews. Shake still needs live scoring, sensor permission handling and a tested Mash fallback in the linked round. |
-| **Outstanding delivery or verification** | Live Claude commentary and catch roasts with scripted fallback, personal round-end mugshots, the three-level solo gauntlet, NPC fill for small rooms and full host controls. Fresh-clone setup and a 100-client load run still need verification. |
+| Fresh clone → `cp .env.example .env` → add key → `npm i && npm run dev` | Done from a clean copy of the tracked files, with the key only in `.env`. Every page loaded, and Claude answered. |
+| Scripted 2-minute demo: first entry ≤ 35 s, a chaos rule live, ≥ 3 catches with roasts, finale, mugshots | `server/test/demo.test.ts` (real sockets, mocked Claude) and `npm run e2e` (1 projector + 4 phone pages in Chromium). The e2e run saw first entry at about 28 game-seconds. One `npm run sim` round with real Claude (Haiku 5.5) passed 19/19 checks; all 14 Claude calls answered in about 1.6–3 s with no fallbacks. |
+| Solo completes all three levels on one phone | `npm run e2e` clears Dive Bar → Rooftop → Area 51 in a browser and ends on **BOUNCER BEATEN**. Also covered by `server/test/flow.test.ts`. |
+| Plays on with Claude unreachable | `server/test/fallback.test.ts`: full rounds with Claude down, Claude slower than the timeout, and Claude switched off on the host page. Every catch still gets a scripted line, and commentary and mugshots still arrive. |
+| All tests green, no console errors | `npm test`: 94 tests. `npm run e2e`: 14/14 checks, with no console errors or warnings on the projector or any phone. |
 
-### Running a linked round
+**Also verified:** a 100-phone load round (`npm run load`) passed. Phones got 15 Hz, the projector median was 15 Hz, a tick took 1.9 ms on average, memory stayed flat and there were 0 socket errors. The Claude eval (`npm run eval:bouncer`) passed with 27/27 valid answers, p95 2.7 s, for $0.005.
+
+### What is in the build
+
+- **Rooms:** the projector creates a 4-letter room and its QR code opens `play.html?room=CODE`. Refreshing the projector re-opens the same room. Reconnecting phones keep their spot.
+- **Core loop:** hold to sneak and freeze when Gus looks, with a 200 ms grace window plus a latency allowance per phone. Gus starts sleepy and naps at 35 s if nobody is in.
+- **Prove It challenge:** **Shake** on phones with motion sensors, **Mash** otherwise. Taps always count, so the fallback is built in.
+- **VIP Owner:** picks 1 of 3 random chaos rules in 12 s: **Lights Out, New Glasses, Moonwalk, Disco**. All four are live on the server, the projector and the phones.
+- **Lounge powers:** Banana, Distract and Snitch, each with a cooldown.
+- **NICE TRY, NERD:** more than 20 taps a second ignores your input for 5 s.
+- **Gus's brain HUD:** Ego, Paranoia, Boredom and Suspicion actually change his timing.
+- **NPC fill:** NPCs fill rooms with fewer than 4 people. They never get in and are not ranked.
+- **Finale and reveal:** a 10 s rope push, then a 5 s coup vote, then one VIP crowned. Ranking puts the crown holder first. Every phone gets a personal mugshot receipt, which can be saved as a PNG.
+- **Claude as Gus** ([docs/AI.md](./docs/AI.md)): round script, catch roasts written during the 5-second challenge, commentary every 10 s and mugshot receipts. The sharpest lines are spoken on the projector by text-to-speech. Every line has a scripted fallback, so the game never waits.
+- **Solo gauntlet:** open `play.html` with no code. Dive Bar (sleepy), Rooftop (fake-outs), Area 51 (searchlight).
+- **Host page** `/admin.html?room=CODE`:
+  - start and reset;
+  - kick players;
+  - round length 90 or 120 s;
+  - a difficulty slider;
+  - NPC on/off;
+  - a **Claude lines** switch, which is also how to rehearse "Claude unreachable";
+  - a live Claude cost and latency meter.
+
+**Not built (Tier B/C, outside §3.8):**
+- the Freeze! and Dodge the Flashlight challenges;
+- phone sabotage (dodging button, upside-down screen, fake CAPTCHA);
+- the mid-round coup meter (the finale vote does that job);
+- Strike a Pose and Forge a VIP Pass, which need Claude Vision;
+- the Alleyway raccoon.
+
+**Deviation from the plan:** the transport is plain WebSockets, not Socket.IO. The linked build already used them; see [docs/PROTOCOL.md](./docs/PROTOCOL.md).
+
+### Running a round
 
 ```bash
+cp .env.example .env     # add ANTHROPIC_API_KEY (without it Gus uses scripted lines)
 npm install
-npm run dev
+npm run dev              # or: npm run dev:https  (self-signed HTTPS so iPhones allow shake)
 ```
 
-1. Open `http://localhost:5173/screen.html` on the projector laptop. Phones scan its QR code, which points at the laptop's LAN address.
-2. Each phone picks a look and a name, then taps **Get in line**. The projector lobby lists only joined phones, and the count is the real head count. No mock crowd appears in linked mode.
-3. The host presses **S** on the projector to start and **R** to reset to a new lobby.
-4. To check the round without phones, run `npm run sim` in a second terminal. It drives four scripted phones through the "first entrant loses the throne" scenario and checks that the projector and every phone agree on the lobby, Moonwalk and the winner. Add `-- --allow-extra` to let real phones join the same round.
+1. On the projector laptop, open `http://localhost:5173/screen.html`. It creates a room, shows **ROOM ABCD** and a QR code pointing at the laptop's LAN address. If the QR shows the wrong address (VPN, WSL, several network cards), restart with `LAN_HOST=192.168.x.y npm run dev`.
+2. Phones scan the QR code, pick a look and a name, then tap **Get in line**.
+3. Open `/admin.html?room=ABCD` on the host's phone or laptop. Press **Start** there, or press **S** on the projector (**R** resets to the lobby and **M** mutes Gus's voice).
+4. Run `npm run sim` to check a round without phones. It creates its own room, or joins yours with `-- --room ABCD`.
 
-The old design previews are still available at `screen.html?preview` and `play.html?preview`, which include the dev toolbar. **Do not edit `server/` during a playtest.** Vite restarts the server on any change there, and the room is lost.
+**Notes:**
+- Without HTTPS, iPhones block motion sensors, so they get Mash. Android Chrome also needs HTTPS for sensors.
+- Design previews are still available at `screen.html?preview` and `play.html?preview`.
+- **Don't edit `server/` during a playtest.** Vite restarts the server and the room is lost.
+- `npm run build && npm start` serves the production build plus the game on port 8080. That is the Phase 3 starting point.
 
-### Recommended order for Claude
+| Command | What it checks |
+| --- | --- |
+| `npm test` | Engine unit tests, Claude client tests (no network) and real-socket round tests with mocked Claude |
+| `npm run e2e` | Browser run with 1 projector and 4 phones, plus solo, with mocked Claude. Screenshots go to `/tmp/e2e-shots` |
+| `npm run load` | 100 simulated phones through a full round |
+| `npm run eval:bouncer` | About 20 real Claude calls checking validity, length, tone, latency and cost. Costs about half a cent |
 
-1. **P0 — Reproduce the round on another laptop.** Once the linked build is published, start from a fresh clone, join with four real phones, reconnect one mid-round and start a second round. Record where the host has to intervene.
-2. **P0 — Test the two cues that confused the browser playtest.** Lead with **LET GO** when Moonwalk starts under a held thumb. Reserve **#1** for final rank and label first entry separately. Count unprompted releases and ask each player who won.
-3. **P1 — Deliver one complete Gus interaction.** Generate a catch roast during the five-second challenge, use a scripted line on timeout and keep the room moving. Rehearse three catches and deliver each player’s own mugshot at the buzzer.
-4. **P1 — Expand the live choices.** Wire Shake and its tap fallback, then offer three working chaos choices. Try Lights Out next because its effect is visible across the room.
-5. **P2 — Finish the remaining play modes and scale checks.** Complete solo through Area 51, fill small rooms with NPCs, add host controls and run 100 simulated clients. Solo remains part of Jonathan’s Phase 2 acceptance criteria.
+### Still to check with people and devices (P0 from the previous review)
 
-**Round length is an open tuning decision.** The local build runs **90 seconds** including the finale. Jonathan’s demo script specifies **120 seconds**. Start the physical playtest at 90 seconds and record time to first entry, number of catches and time spent playing under Moonwalk before the rush. Use those observations to decide whether the extra 30 seconds would improve the demo.
+1. **Real phones.** Use four phones on the venue Wi-Fi with iOS Safari and Android Chrome. Lock one phone and reopen it, refresh one mid-round, and start a second round. Record every moment the host has to step in.
+2. **Shake on iPhone.** Run it under `npm run dev:https`. Accept the certificate warning once, then the motion prompt on **Get in line**. Check that Shake passes at roughly the intended rate (about 60%).
+3. **The two cues from the browser playtest.** Count how many players let go unprompted when Moonwalk starts. Ask every player "who won?" at the reveal.
+4. **Sound.** Check the projector's text-to-speech voice and the tell sting through the room's speakers. Some browsers only speak after a click on the page.
+5. **Round length.** The default is now **120 s**, Jonathan's demo script. The previous review suggested starting the physical playtest at **90 s**; switch it on the host page. Record time to first entry, number of catches and time spent under the owner's rule.
 
 ## Latest linked playtest
 

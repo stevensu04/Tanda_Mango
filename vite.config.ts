@@ -5,13 +5,15 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import { gamePlugin } from './server/plugin';
 
 // Phones can't open "localhost", so the lobby QR code needs the laptop's LAN address.
+// Home/venue Wi-Fi ranges win over VPN/virtual adapters; LAN_HOST=192.168.1.20 overrides the guess.
 function lanAddress(): string {
+  if (process.env.LAN_HOST) return process.env.LAN_HOST;
+  const all: string[] = [];
   for (const list of Object.values(networkInterfaces())) {
-    for (const net of list ?? []) {
-      if (net.family === 'IPv4' && !net.internal) return net.address;
-    }
+    for (const net of list ?? []) if (net.family === 'IPv4' && !net.internal) all.push(net.address);
   }
-  return 'localhost';
+  const rank = (a: string) => a.startsWith('192.168.') ? 0 : /^10\./.test(a) && a !== '10.255.255.254' ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(a) ? 2 : 3;
+  return all.sort((a, b) => rank(a) - rank(b))[0] ?? 'localhost';
 }
 
 const PORT = Number(process.env.PORT) || 5173;

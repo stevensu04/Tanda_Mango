@@ -55,6 +55,8 @@ export class Director {
   }
 
   private track<X>(p: Promise<X | null>): Promise<X | null> {
-    return p.then((x) => { this.healthy = x !== null; return x; }, () => { this.healthy = false; return null; });
+    // belt and braces: whatever the voice does, the director gives up after 5 s
+    const timeout = new Promise<null>((res) => setTimeout(() => res(null), 5000).unref?.());
+    return Promise.race([p, timeout]).then((x) => { this.healthy = x !== null; return x; }, () => { this.healthy = false; return null; });
   }
 }
