@@ -4,7 +4,15 @@
 
 ## Current status
 
-As of 21 November 2026, the published main branch contains the design documents. A fresh clone has no playable round. Local work includes the TypeScript scaffold and pixel art for the characters and text.
+The Phase 1 prototype includes interactive phone and projector pages. The table records a 21 November 2026 browser walkthrough in Chrome at a 390 × 844 phone viewport, with the projector open separately. The two pages ran their own previews. Physical phone sensors and four-player comprehension still need testing.
+
+| Flow | What worked on the phone | What the projector showed |
+| --- | --- | --- |
+| **Catch and recover · playable from Join** | Tapped **Get in line**, held Sneak through Gus’s turn, entered the five-second **Mash!** challenge automatically, and tapped through to **You pass**. | The separately selected catch preview showed **Caught! Dave** against the red sweep. The phone catch did not trigger that spotlight. |
+| **Moonwalk · Owner preview** | Selected Owner in the dev menu and tapped **Moonwalk**. The card turned gold and Gus confirmed **Rule set: Moonwalk**. The card describes the effect as **Controls flip**. | The separately selected projector preview displayed **Moonwalk**. The ordinary sneaker view still read **Hold to sneak**. The owner selection did not update the other screens’ instructions or demonstrate reversed movement. |
+| **Rush and crown · separate previews** | Five taps in Mosh produced **5 pushes**. In the Lounge preview, tapping the crown started a 15-second cooldown. | The rush preview showed the crowd meter and **Rope snapped!**. The results preview led with **First in**. The phone inputs did not establish who took the throne. |
+
+**Next linked playtest.** When an owner activates Moonwalk, show **Release to move** on the projector and **Hold to freeze** under each outside player’s thumb. For the finale, Jonathan’s rule awards the crown to whoever holds the seat at the buzzer. Test a round where the first entrant loses the seat and check that both screens identify the same final owner. The five-second coup vote below is a proposed experiment.
 
 ## Jonathan’s planned gameplay
 
