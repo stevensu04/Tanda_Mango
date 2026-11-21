@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, deploy-site]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -18,10 +18,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-  # Release: every push to deploy-site triggers a Render deploy, independent of the checks above
+  # Release: every push to main triggers a Render deploy, independent of the checks above
   # (no `needs: check`), so failing tests don't block a deploy.
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy-site'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Render

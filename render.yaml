@@ -4,13 +4,13 @@ services:
     name: jailbreak-the-bouncer
     runtime: docker
     plan: free
-    branch: deploy-site
+    branch: main
     numInstances: 1
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
-    # Deploy only from deploy-site (merge main -> deploy-site to release). The CI deploy job fires the
-    # deploy hook on every deploy-site push, whether or not tests pass.
+    # Deploys from main. The CI deploy job fires the deploy hook on every push to main,
+    # whether or not tests pass.
     autoDeployTrigger: checksPass
     envVars:
       - key: ANTHROPIC_API_KEY
