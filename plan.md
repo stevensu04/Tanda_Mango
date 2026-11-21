@@ -143,7 +143,7 @@ Once you're in, your phone becomes a one-button power panel (each power has a co
 |---|---|
 | Stack | **Node 22 + Socket.IO** server, **Vite + TypeScript** frontend (no framework, plain TS modules + CSS) |
 | Pages | `/screen` (projector), `/play` (phone), `/admin` (host controls), all served by one Node process |
-| Art style | **Neon cartoon 2D**: flat SVG avatars, glowing neon signage, CSS/SVG animation (no Three.js) |
+| Art style | **Late-90s handheld RPG** (changed 2026-11-21, see `docs/DESIGN.md`): 320×180 pixel canvas at whole-number scale, 16-colour "Velvet Night" palette, hand-made 16×16 sprites with palette swaps, in-house bitmap font, text boxes, "!" spotted alerts. No SVG, no Three.js |
 | Gameplay | **Sneak Past the Bouncer** (hold to move, freeze when he turns) + **5-second "Prove It" microgames** when caught + **Mosh-Pit Rush** finale. **No typing anywhere** |
 | AI | Anthropic TypeScript SDK (`@anthropic-ai/sdk`), default model **`claude-haiku-5-5`** at `effort: "low"`. Claude roasts, taunts, commentates and judges vision; it **never blocks gameplay** |
 | Run (Phase 2) | **Localhost only**: `npm run dev`; phones join over the same Wi-Fi using the laptop's LAN IP |
@@ -232,7 +232,7 @@ web/
 13. **Solo gauntlet**: Dive Bar → Rooftop → Area 51 level select / progress, each with its own theme.
 14. **Alleyway** (Tier C): raccoon + "dig through trash" mash screen.
 
-### 2.3 Starting design direction (to be argued about at review)
+### 2.3 Starting design direction (superseded by `docs/DESIGN.md`, kept for history)
 - **Palette**: near-black purple background `#0B0614`, hot pink neon `#FF2E88`, cyan neon `#22E4FF`, VIP gold `#FFC83D`, alarm red `#FF3B30`, velvet `#7A0E2E`. Text uses off-white `#F5F0FF`. **Red = danger/watching** and **green/cyan = safe to move** must read instantly from across a room.
 - **Glow**: layered `text-shadow`/`box-shadow` neon, driven by a `--glow` token. Includes a subtle flicker animation (disabled under `prefers-reduced-motion`).
 - **Type**: a neon script or condensed display face for signage, plus a chunky rounded sans for UI. Phone labels are huge and few. Projector text ≥ 32px.
