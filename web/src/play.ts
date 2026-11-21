@@ -67,7 +67,7 @@ nameInput.setAttribute('aria-label', 'Your name');
 nameInput.value = savedName ? myName : suggested;
 nameInput.placeholder = suggested;
 nameInput.style.cssText = `position:fixed;display:none;z-index:5;box-sizing:border-box;margin:0;padding:0 4px;border:0;outline:0;
-  background:transparent;color:${C.INK};text-align:center;text-transform:uppercase;font-family:ClubPixelCJK,monospace;
+  background:${C.PAPER};color:${C.INK};transform:translateZ(0);-webkit-transform:translateZ(0);will-change:transform;text-align:center;text-transform:uppercase;font-family:ClubPixelCJK,monospace;
   caret-color:${C.VELVET};-webkit-user-select:text;user-select:text;-webkit-font-smoothing:none;font-smooth:never;border-radius:0;`;
 document.body.appendChild(nameInput);
 /**
@@ -89,16 +89,20 @@ nameInput.addEventListener('keydown', (e) => {
   if (LIVE && net?.up && (!me || !me.id)) sendJoin();
 });
 nameInput.addEventListener('blur', fitName);
+// iPhone Safari stops repainting a see-through box over the 60fps canvas until blur, so the box is
+// opaque and on its own layer (translateZ). It is also left alone while focused: iOS scrolls the page
+// when the keyboard opens, and moving/resizing a focused box every frame also stops it repainting.
 function placeNameInput(x: number, y: number, w: number, h: number) {
   nameShown = true;
+  if (nameInput.dataset.box && document.activeElement === nameInput) return;
   const r = scr.canvas.getBoundingClientRect();
   const k = r.width / scr.w;
-  const css = `left:${r.left + x * k}px;top:${r.top + y * k}px;width:${w * k}px;height:${h * k}px;font-size:${10 * k}px;line-height:${h * k}px;display:block;`;
+  const px = (n: number) => `${Math.round(n)}px`;
+  const box = { left: px(r.left + x * k), top: px(r.top + y * k), width: px(w * k), height: px(h * k), fontSize: px(10 * k), lineHeight: px(h * k) };
+  const css = Object.values(box).join(';');
   if (nameInput.dataset.box !== css) {
     nameInput.dataset.box = css;
-    nameInput.style.left = `${r.left + x * k}px`; nameInput.style.top = `${r.top + y * k}px`;
-    nameInput.style.width = `${w * k}px`; nameInput.style.height = `${h * k}px`;
-    nameInput.style.fontSize = `${10 * k}px`; nameInput.style.lineHeight = `${h * k}px`;
+    Object.assign(nameInput.style, box);
     nameInput.style.display = 'block';
   }
 }
