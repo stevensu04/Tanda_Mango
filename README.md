@@ -2,7 +2,22 @@
 
 **Hold to sneak. Let go before Gus turns around.** Jailbreak the Bouncer is a hackathon party game designed for one shared screen and a room full of phones. The projector shows the entrance to Club Velvet, and each phone is a controller.
 
-## Current status
+## Latest linked playtest
+
+On 21 November 2026, one projector and four independent Chrome phone sessions completed a round in the same room on the local development build. The networking changes were uncommitted at the time of testing.
+
+| Check | Observed result |
+| --- | --- |
+| Four names | Each join added one player. The projector showed **004 PEOPLE** and listed **DJ OYSTER**, **TOTALLY 21**, **TOTALLY 21 2** and **THE INTERN**. The numeric suffix distinguished two phones that chose the same name. |
+| Moonwalk handoff | **DJ OYSTER** activated Moonwalk while all three outside phones were holding Sneak. All three displayed **MOONWALK: LET GO TO MOVE** and **HOLD TO FREEZE**. The projector simultaneously displayed **RELEASE TO MOVE**. Whether new players release without coaching still needs a human playtest. |
+| One VIP on five screens | **TOTALLY 21** took the crown from **DJ OYSTER**. The projector named TOTALLY 21 as VIP. Only that player’s phone showed **YOU’RE TONIGHT’S VIP**. The other three named the same winner and showed their own ranks of second, third and fourth. |
+
+### Design suggestions from this round
+
+- **Lead with LET GO.** When Moonwalk starts while a player’s thumb is down, make **LET GO** the largest cue in the button. Once they release and their avatar moves, switch the button to **HOLD TO FREEZE**. In the tested version, **HOLD** was the largest word at the moment the player needed to release.
+- **Give #1 one meaning on the results screen.** The ranking showed TOTALLY 21 first with 70 points and DJ OYSTER second with 100. The adjacent first-entry award also labelled DJ OYSTER **#1**. Label the award **FIRST THROUGH THE DOOR — DJ OYSTER** and explain that the crown holder ranks first.
+
+## Earlier Phase 1 preview walkthrough
 
 The Phase 1 prototype includes interactive phone and projector pages. The table records a 21 November 2026 browser walkthrough in Chrome at a 390 × 844 phone viewport, with the projector open separately. The two pages ran their own previews. Physical phone sensors and four-player comprehension still need testing.
 
@@ -16,7 +31,7 @@ The Phase 1 prototype includes interactive phone and projector pages. The table 
 
 **Checked at `4c279b0`.** The projector QR opened the phone page. The lobby populated itself from a timed mock crowd, each phone handled its own controls, and the projector read a fixed results list. A linked four-phone round was therefore still unverified at this revision.
 
-**Pending acceptance test.** Open one projector and have four independent phone sessions join through its QR. Choose four distinct names. Run all three checks in the same round using the player controls.
+**Repeatable acceptance test.** Open one projector and have four independent phone sessions join through its QR. Choose four distinct names. Run all three checks in the same round using the player controls.
 
 | Check | Action and pass condition |
 | --- | --- |
