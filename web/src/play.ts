@@ -52,7 +52,7 @@ const randomNick = (not = '') => { let n = not; while (n === not) n = NICKNAMES[
 let suggested = randomNick();          // shown as the placeholder; used when the box is left blank
 const savedName = (() => { try { return localStorage.getItem(NAME_KEY) ?? ''; } catch { return ''; } })();
 let myName = cleanName(savedName) || suggested;
-let composing = false;                 // a Chinese IME is mid-composition: leave the text alone, Enter confirms it
+let composing = false;                 // the phone keyboard is mid-word (Gboard underlines it): don't rewrite the box yet
 let tooLongAt = -9;                    // when we last cut the name back to 12 cells (shows the red hint)
 let nameShown = false;                 // drawJoin laid the box out this frame
 const nameInput = document.createElement('input');
@@ -62,6 +62,7 @@ nameInput.autocomplete = 'off';
 nameInput.spellcheck = false;
 nameInput.enterKeyHint = 'go';
 nameInput.setAttribute('autocapitalize', 'characters');
+nameInput.setAttribute('autocorrect', 'off');
 nameInput.setAttribute('aria-label', 'Your name');
 nameInput.value = savedName ? myName : suggested;
 nameInput.placeholder = suggested;
@@ -69,19 +70,20 @@ nameInput.style.cssText = `position:fixed;display:none;z-index:5;box-sizing:bord
   background:transparent;color:${C.INK};text-align:center;text-transform:uppercase;font-family:ClubPixelCJK,monospace;
   caret-color:${C.VELVET};-webkit-user-select:text;user-select:text;-webkit-font-smoothing:none;font-smooth:never;border-radius:0;`;
 document.body.appendChild(nameInput);
-/** Cut an over-long name back to 12 cells (12 letters or 6 Chinese characters), never mid-composition. */
+/**
+ * Read the name from the box. Always updates myName, even while the keyboard is mid-word (phone
+ * keyboards hold English words "in progress" until space or blur, and tapping the canvas doesn't
+ * blur). Only cuts an over-long name back to 12 letters when the keyboard isn't mid-word.
+ */
 function fitName() {
-  if (composing) return;
-  if (cells(nameInput.value.trim()) > NAME_CELLS) { nameInput.value = cutCells(nameInput.value.trimStart(), NAME_CELLS); tooLongAt = t; }
+  if (!composing && cells(nameInput.value.trim()) > NAME_CELLS) { nameInput.value = cutCells(nameInput.value.trimStart(), NAME_CELLS); tooLongAt = t; }
   myName = cleanName(nameInput.value) || suggested;
 }
 nameInput.addEventListener('compositionstart', () => { composing = true; });
 nameInput.addEventListener('compositionend', () => { composing = false; fitName(); });
-nameInput.addEventListener('input', (e) => { if ((e as InputEvent).isComposing || composing) return; fitName(); });
+nameInput.addEventListener('input', fitName);
 nameInput.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
-  // with a Chinese IME, the first Enter only confirms the characters: never join on it
-  if (e.isComposing || composing || e.keyCode === 229) return;
   e.preventDefault();
   nameInput.blur();
   if (LIVE && net?.up && (!me || !me.id)) sendJoin();
@@ -275,14 +277,14 @@ function drawJoin() {
   blit(ctx, playerSprite(look, Math.floor(t * 2) % 6 === 0 ? 'cheer' : 'stand'), 48, ay + 4, false, 4);
   button('prevLook', '<', 4, ay + 30, 22, 22);
   button('nextLook', '>', W - 26, ay + 30, 22, 22);
-  // your name: typed (Chinese or English) or rerolled with NEW; the box is a real input on top of the canvas
+  // your name: typed or rerolled with NEW; the box is a real input on top of the canvas
   drawText(ctx, 'YOUR NAME', 10, ay + 88, C.STONE_HI);
   const focused = document.activeElement === nameInput;
   frame(ctx, 8, ay + 97, W - 52, 22, C.PAPER, focused ? C.VELVET : C.INK);
   placeNameInput(9, ay + 98, W - 54, 20);
   button('name', 'NEW', W - 40, ay + 99, 32, 18, C.LAMP);
   const long = t - tooLongAt < 3;
-  drawTextCentered(ctx, long ? 'TOO LONG: 12 OR 6 CHINESE' : 'MAX 12 LETTERS/6 CHINESE', W / 2, ay + 123, long ? C.ALERT : C.STONE);
+  drawTextCentered(ctx, long ? 'TOO LONG: MAX 12 LETTERS' : 'MAX 12 LETTERS', W / 2, ay + 123, long ? C.ALERT : C.STONE);
   // motion permission
   const my = ay + 134;
   if (!LIVE) {
@@ -882,6 +884,8 @@ function liveDown(id: string | null, x: number, y: number): boolean {
 
 function sendJoin() {
   void sensors?.request();
+  if (document.activeElement === nameInput) nameInput.blur(); // finish any half-typed word first
+  composing = false;
   fitName();
   try { if (cleanName(nameInput.value)) localStorage.setItem(NAME_KEY, nameInput.value.trim()); } catch { /* private mode */ }
   net!.send({ t: 'join', name: myName, seed });

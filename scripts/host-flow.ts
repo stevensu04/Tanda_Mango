@@ -90,7 +90,7 @@ async function main() {
     await sleep(800);
     check('...but its S key does not start A', (await proj.evaluate(() => (window as any).__club.snap().phase)) === 'lobby');
     const phones: Page[] = [];
-    for (const name of ['阿哲', 'WESLEY']) {
+    for (const name of ['JAY', 'WESLEY']) {
       const ph = await (await playerBrowser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
       await ph.goto(`${BASE}/play.html?room=${A}`);
       await ph.waitForFunction(() => !!(window as any).__club?.target('joinBtn'));

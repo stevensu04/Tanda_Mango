@@ -28,16 +28,16 @@ export function cutCells(s: string, max: number): string {
 }
 
 /**
- * A player name as the game shows it: Latin letters in caps with accents folded (É -> E), digits,
- * Chinese/Japanese/Korean characters, spaces and . ' ! ? -. Everything else is dropped. Cut to
- * NAME_CELLS. Returns '' when nothing usable is left: callers fall back to a default nickname.
+ * A player name as the game shows it: English letters in caps with accents folded (É -> E), digits,
+ * spaces and . ' ! ? -. Everything else is dropped. Cut to NAME_CELLS. Returns '' when nothing
+ * usable is left: callers fall back to a default nickname.
  */
 export function cleanName(s: unknown): string {
   const t = String(s ?? '')
     .normalize('NFKC') // full-width ＡＢＣ -> ABC, ideographic space -> space
     .replace(/[À-ɏ]/g, (ch) => ch.normalize('NFD').replace(/[̀-ͯ]/g, ''))
     .toUpperCase()
-    .replace(/[^A-Z0-9 .'!?\-\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}ー々〆]/gu, '')
+    .replace(/[^A-Z0-9 .'!?\-]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   return cutCells(t, NAME_CELLS).trim();
@@ -49,5 +49,5 @@ export const tagText = (n: number) => String(n).padStart(2, '0');
 /** Fun default nicknames: the join page prefills one, and the server uses one when a name comes in blank. */
 export const NICKNAMES = [
   'SNEAKY PETE', 'NOT A COP', 'DJ OYSTER', 'TOTALLY 21', 'VIP-ISH', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN',
-  'BOUNCY', 'PLUS ONE', 'DISCO NAP', 'GLOWSTICK', '不是警察', '舞池小霸王', '隱形人', '排隊達人', '夜貓子',
+  'BOUNCY', 'PLUS ONE', 'DISCO NAP', 'GLOWSTICK', 'LINE LEGEND', 'NIGHT OWL', 'GHOST', 'DANCE BOSS',
 ];

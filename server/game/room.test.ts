@@ -702,17 +702,17 @@ describe('reconnects and membership', () => {
     expect(r.players.get(a)!.name).toBe('ANNA');
   });
 
-  it('cleans names, keeps Chinese, keeps duplicates, and falls back to a nickname', () => {
+  it('cleans names to English only, keeps duplicates, and falls back to a nickname', () => {
     const r = mkRoom();
     const a = r.join('a', 'totally <21>', 1);
     const b = r.join('b', 'TOTALLY 21', 2);
     expect(r.players.get(a)!.name).toBe('TOTALLY 21');
     expect(r.players.get(b)!.name).toBe('TOTALLY 21');
-    expect(r.players.get(r.join('z1', '阿哲', 4))!.name).toBe('阿哲');
-    expect(r.players.get(r.join('z2', '  小林 Jay ', 5))!.name).toBe('小林 JAY');
+    expect(r.players.get(r.join('z1', 'jay', 4))!.name).toBe('JAY');
+    expect(r.players.get(r.join('z2', '  小林 Jay ', 5))!.name).toBe('JAY'); // non-English characters are dropped
     expect(r.players.get(r.join('z3', 'Wesley', 6))!.name).toBe('WESLEY');
     expect(r.players.get(r.join('z4', 'Zoë 🎉', 7))!.name).toBe('ZOE');
-    expect(r.players.get(r.join('z5', '一二三四五六七八', 8))!.name).toBe('一二三四五六'); // 12 cells
+    expect(NICKNAMES).toContain(r.players.get(r.join('z5', '阿哲', 8))!.name); // nothing English left: a nickname
     expect(r.players.get(r.join('z6', 'ABCDEFGHIJKLMNOP', 9))!.name).toBe('ABCDEFGHIJKL');
     const blank = r.players.get(r.join('c', ' \u3000  ', 3))!.name;
     expect(NICKNAMES).toContain(blank);

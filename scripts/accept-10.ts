@@ -5,7 +5,7 @@
  *
  *   npx tsx scripts/accept-10.ts        (about 5 minutes)
  *
- * Covers: Chinese/English names (two 阿哲), IME Enter, over-long names, Test sound before the round,
+ * Covers: names (two JAYs), Enter to join, over-long names, Test sound before the round,
  * starting from the host phone, phone ↻ Refresh mid-walk (7th player), Refresh after voting (vote
  * counted once), projector ↻ Refresh near the end (same room keeps counting down), a coup where the
  * first entrant loses the throne, a round where the owner keeps it, three Lounge powers by name,
@@ -38,8 +38,8 @@ function watch(page: Page, label: string) {
   page.on('pageerror', (e) => errors.push(`${label} pageerror: ${e.message}`));
 }
 
-const NAMES = ['阿哲', '阿哲', 'Wesley', '小林 Jay', 'NOT A COP', 'DJ OYSTER', '舞池小霸王', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN'];
-const SHOWN = ['阿哲', '阿哲', 'WESLEY', '小林 JAY', 'NOT A COP', 'DJ OYSTER', '舞池小霸王', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN'];
+const NAMES = ['Jay', 'Jay', 'Wesley', 'Lin Jay', 'NOT A COP', 'DJ OYSTER', 'Dance Boss', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN'];
+const SHOWN = ['JAY', 'JAY', 'WESLEY', 'LIN JAY', 'NOT A COP', 'DJ OYSTER', 'DANCE BOSS', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN'];
 const SEVENTH = 6;                       // refreshes mid-walk in round A
 const SLOWPOKES = new Set([7, 8, 9]);    // stay outside in round B
 
@@ -90,17 +90,13 @@ async function main() {
       await page.waitForFunction(() => !!(window as unknown as { __club?: Club }).__club?.target('joinBtn'), null, { timeout: 15000 });
       const ph: Phone = { i, page, ctx, holding: false, lastTap: 0, voteAt: 0, voteChoice: null, voted: false, frozenUntil: 0 };
       if (i === 3) {
-        // over-long name gets cut to 12 cells with a hint; an IME Enter (keyCode 229) must not join
-        await page.fill('#nameInput', '一二三四五六七八九');
+        // over-long name gets cut to 12 letters with a hint; Enter joins
+        await page.fill('#nameInput', 'ABCDEFGHIJKLMNOP');
         await sleep(150);
         const cut = await page.inputValue('#nameInput');
         await page.screenshot({ path: `${OUT}/0-phone-name-too-long.png` });
-        check('over-long Chinese name is cut to 6 characters with a hint', cut === '一二三四五六', cut);
+        check('over-long name is cut to 12 letters with a hint', cut === 'ABCDEFGHIJKL', cut);
         await page.fill('#nameInput', NAMES[i]);
-        await page.focus('#nameInput');
-        await page.evaluate(() => document.getElementById('nameInput')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true })));
-        await sleep(400);
-        check('IME Enter (composition) does not join', !(await me(page))?.id);
         await page.focus('#nameInput');
         await page.keyboard.press('Enter');              // a real Enter joins
       } else if (i === 4) {
@@ -119,10 +115,10 @@ async function main() {
     SHOWN[4] = blankName;
     log('lobby', lob.players.map((p: any) => `${String(p.tag).padStart(2, '0')} ${p.name}`).join(' | '));
     check('lobby lists all 10 phones with numbers 01..10', lob.players.length === 10 && lob.players.map((p: any) => p.tag).sort((a: number, b: number) => a - b).join() === '1,2,3,4,5,6,7,8,9,10');
-    check('names arrive as typed (Chinese kept, Latin in caps)', SHOWN.every((n, i) => i === 4 || lob.players.some((p: any) => p.name === n)), SHOWN.join(', '));
+    check('names arrive as typed (in caps)', SHOWN.every((n, i) => i === 4 || lob.players.some((p: any) => p.name === n)), SHOWN.join(', '));
     check('a blank name falls back to a nickname', !!blankName && blankName.trim().length > 0, blankName);
-    const azhe = lob.players.filter((p: any) => p.name === '阿哲');
-    check('two 阿哲 keep the same name and get different numbers', azhe.length === 2 && azhe[0].tag !== azhe[1].tag, azhe.map((p: any) => String(p.tag).padStart(2, '0')).join(' vs '));
+    const azhe = lob.players.filter((p: any) => p.name === 'JAY');
+    check('two JAYs keep the same name and get different numbers', azhe.length === 2 && azhe[0].tag !== azhe[1].tag, azhe.map((p: any) => String(p.tag).padStart(2, '0')).join(' vs '));
     await shotScreen('1-lobby-10-projector');
     await phones[0].page.screenshot({ path: `${OUT}/1-phone-azhe-A.png` });
     await phones[1].page.screenshot({ path: `${OUT}/1-phone-azhe-B.png` });

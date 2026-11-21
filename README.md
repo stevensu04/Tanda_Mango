@@ -2,6 +2,11 @@
 
 **Hold to sneak. Let go before Gus turns around.** A party game for one big screen and a room full of phones. The projector shows the entrance to Club Velvet. Every phone is a controller, so there is nothing to install. Claude plays Gus the bouncer and roasts you when you get caught.
 
+## Play it online
+
+- **Game:** https://jailbreak-the-bouncer.onrender.com/
+- **Admin page (host only):** https://jailbreak-the-bouncer.onrender.com/admin.html
+
 ## What you need
 
 - **Node.js 22 or newer** and npm

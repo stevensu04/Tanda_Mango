@@ -31,7 +31,7 @@ async function run(browser: Browser, path: string): Promise<Row> {
   await screen.waitForFunction(() => /room=[A-Z]{4}/.test(location.search));
   const code = new URL(screen.url()).searchParams.get('room')!;
   const phones = [];
-  for (const name of ['NOT A COP', '阿哲']) {
+  for (const name of ['NOT A COP', 'JAY']) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const p = await ctx.newPage();
     await p.goto(`${BASE}/play.html?room=${code}`);

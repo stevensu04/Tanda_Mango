@@ -111,7 +111,7 @@ async function main() {
       const p = await ctx.newPage();
       await p.goto(`${BASE}/play.html?room=${code}`);
       await p.waitForFunction(() => !!(window as any).__club?.target('joinBtn'));
-      await p.fill('#nameInput', ['阿哲', 'WESLEY', '小林 JAY', 'TALL KEV'][i]);
+      await p.fill('#nameInput', ['JAY', 'WESLEY', 'LIN JAY', 'TALL KEV'][i]);
       const pt = (await point(p, 'joinBtn'))!;
       await p.mouse.click(pt.x, pt.y);
       phones.push(p);

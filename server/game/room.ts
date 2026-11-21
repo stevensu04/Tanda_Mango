@@ -8,7 +8,7 @@ import {
 import { Gus } from './gus';
 import { cleanName, cutCells, NICKNAMES, tagText } from '../../shared/text';
 
-/** A player as notices name them: "08 阿哲" (the number tells same-name players apart). */
+/** A player as notices name them: "08 JAY" (the number tells same-name players apart). */
 const who = (p: { tag: number; name: string }) => (p.tag ? `${tagText(p.tag)} ${p.name}` : p.name);
 import { FALLBACK_SCRIPT, LINES, ASK, fill, pickLine, fallbackRoast, type RoundScript, type RaceState } from '../ai/fallbacks';
 import type { CatchContext, FinaleContext, FinaleResult, MugshotContext, Persona, Roast } from '../ai/types';
@@ -143,7 +143,7 @@ export class Room {
       return only.id;
     }
     const id = `p${++this.joins}`;
-    // same-name players keep the name they typed: their numbers (03 阿哲, 08 阿哲) tell them apart
+    // same-name players keep the name they typed: their numbers (03 JAY, 08 JAY) tell them apart
     const p = this.newPlayer(id, token, cleanName(name) || NICKNAMES[Math.floor(this.rand() * NICKNAMES.length)], seed | 0, false);
     p.tag = this.freeTag();
     // joining mid-round: you start at the back of the line
