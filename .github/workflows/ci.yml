@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, deploy-site]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # Release: only pushes to deploy-site that pass every check above trigger a Render deploy.
+      - name: Deploy to Render
+        if: github.event_name == 'push' && github.ref == 'refs/heads/deploy-site'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK secret not set; skipping deploy (use Manual Deploy in Render)."
+            exit 0
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" > /dev/null && echo "Render deploy triggered."
