@@ -190,25 +190,34 @@ export function drawSightline(ctx: CanvasRenderingContext2D, t: number) {
   dither(ctx, sx + 2, top, 4, h, C.ALERT);
 }
 
-/** Lights Out: all dark except a flashlight band from Gus. Returns the beam centre x at the middle lane. */
-export function drawDarkness(ctx: CanvasRenderingContext2D, t: number) {
-  const target = 30 + ((Math.sin(t * 0.9) + 1) / 2) * (L.ROPE_X - 60);
+/**
+ * Lights Out: all dark except a flashlight band from Gus.
+ * `target` = beam centre in px (default: a slow sweep for the preview). `half` = half width in px.
+ * `danger` tints the beam ALERT (dither) while Gus is watching. Returns the beam centre x.
+ */
+export function drawDarkness(ctx: CanvasRenderingContext2D, t: number, target = 30 + ((Math.sin(t * 0.9) + 1) / 2) * (L.ROPE_X - 60), half = 26, danger = false) {
   const gx = L.GUS_X, gy = 62;
-  ctx.fillStyle = C.INK;
+  const ph = Math.floor(t * 10) % 2;
   for (let y = 0; y < L.TEXT_Y; y++) {
+    ctx.fillStyle = C.INK;
     if (y < L.STREET_TOP - 4) {
       // keep the sign + door faintly visible
       for (let x = (y & 1); x < L.W; x += 2) ctx.fillRect(x, y, 1, 1);
       continue;
     }
-    const u = (y - gy) / (L.STREET_BOTTOM - gy);
+    // the beam leaves Gus and is straight above the street, so it matches the server's band
+    const u = Math.max(0, Math.min(1, (y - gy) / (L.STREET_TOP + 10 - gy)));
     const cx = gx + (target - gx) * u;
-    const half = 6 + u * 22;
-    const a = Math.round(cx - half), b = Math.round(cx + half);
+    const hw = 6 + u * (half - 6);
+    const a = Math.round(cx - hw), b = Math.round(cx + hw);
     ctx.fillRect(0, y, Math.max(0, a - 3), 1);
     ctx.fillRect(b + 3, y, Math.max(0, L.W - b - 3), 1);
     for (let x = a - 3; x < a; x++) if ((x + y) & 1) ctx.fillRect(x, y, 1, 1);
     for (let x = b + 1; x < b + 3; x++) if ((x + y) & 1) ctx.fillRect(x, y, 1, 1);
+    if (danger && y >= L.STREET_TOP) {
+      ctx.fillStyle = C.ALERT;
+      for (let x = Math.max(0, a); x <= b; x++) if (((x >> 1) + y + ph) % 4 === 0 && (x & 1) === 0) ctx.fillRect(x, y, 1, 1);
+    }
   }
   return target;
 }

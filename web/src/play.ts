@@ -6,7 +6,9 @@ import { sfx, unlock } from './pix/sfx';
 import { devbar } from './devbar';
 import { CHAOS, POWERS, MUGSHOT, SOLO, DEFAULT_NAMES, LINES } from './mock';
 import { connect, phoneToken } from './net';
-import { T, type Me, type PhoneRole, type ServerMsg, type GusPhase } from '../../shared/protocol';
+import { buzz, haptic } from './haptics';
+import { createSensors } from './sensors';
+import { T, RULES, POWERS as POWER_DEFS, type Me, type Mugshot, type PhoneRole, type ServerMsg, type GusPhase } from '../../shared/protocol';
 
 // Linked to the room server by default. ?preview (or ?state=) keeps the offline design preview.
 const params = new URLSearchParams(location.search);
@@ -38,7 +40,7 @@ const STATES: { key: string; id: S; label: string }[] = [
 const W = 160;
 const host = document.getElementById('phone')!;
 const scr = new Screen(host, W, 300);
-const ctx = scr.ctx;
+let ctx = scr.ctx;   // swapped for an offscreen canvas while the mugshot PNG is rendered
 
 // ---------- player ----------
 let seed = Math.floor(Math.random() * 1e6);
@@ -87,8 +89,6 @@ function go(s: S) {
 /** Velvet-curtain wipe into the next state (the "encounter" transition). */
 function wipeTo(s: S) { if (curtain < 0) { curtain = 0; curtainNext = s; } }
 
-function buzz(p: number | number[]) { navigator.vibrate?.(p); }
-
 // ---------- hit regions, rebuilt every frame ----------
 type Hit = { x: number; y: number; w: number; h: number; id: string };
 let hits: Hit[] = [];
@@ -101,7 +101,7 @@ function button(id: string, label: string, x: number, y: number, w: number, h: n
 }
 
 // ---------- the little street window at the top ----------
-function streetWindow(h: number, gusPhase: 'back' | 'tell' | 'watch' | 'sleep', frameMe: PlayerFrame, x01: number) {
+function streetWindow(h: number, gusPhase: 'back' | 'tell' | 'watch' | 'sleep', frameMe: PlayerFrame, x01: number, beam: number | null = null, inBeam = false) {
   const y0 = 4;
   frame(ctx, 2, y0, W - 4, h, C.NIGHT, C.PAPER);
   const ix = 6, iy = y0 + 6, iw = W - 12, ih = h - 12;
@@ -122,6 +122,19 @@ function streetWindow(h: number, gusPhase: 'back' | 'tell' | 'watch' | 'sleep', 
   rect(ctx, vw - 14, ground - 26, 16, 26, C.INK);
   rect(ctx, vw - 13, ground - 25, 16, 25, C.NIGHT);
   rect(ctx, vw - 15, ground - 28, 18, 2, C.NEON);
+  // me (Lights Out: the window plots the whole street so the beam has a readable width)
+  const vwTop = Math.ceil(iw / 2);
+  const spriteX = (v: number) => (beam != null ? Math.round(v * (vwTop - 20)) : 2 + Math.round(v * (vwTop - 56)));
+  if (beam != null) {
+    // the street goes dark except the beam; Gus keeps his flashlight, so he is drawn on top
+    const span = vw - 20, half = Math.max(2, Math.round(T.BEAM_HALF * span));
+    const bl = Math.max(0, Math.round(8 + beam * span - half)), br = Math.min(vw, Math.round(8 + beam * span + half));
+    rect(ctx, 0, 0, Math.max(0, bl - 2), vh, C.INK);
+    dither(ctx, Math.max(0, bl - 2), 0, Math.min(2, bl), vh, C.INK);
+    rect(ctx, br + 2, 0, Math.max(0, vw - br - 2), vh, C.INK);
+    dither(ctx, br, 0, 2, vh, C.INK);
+    dither(ctx, bl, 0, br - bl, vh, inBeam ? C.ALERT : C.LAMP, 1);
+  }
   // gus
   blit(ctx, gusSprite(gusPhase, gusPhase === 'watch' ? C.ALERT : gusPhase === 'tell' ? C.LAMP : C.INK), vw - 36, ground - 27);
   if (gusPhase === 'tell' || gusPhase === 'watch') blit(ctx, icon.bang(gusPhase === 'watch' ? C.ALERT : C.LAMP), vw - 28, ground - 39 + (Math.floor(t * 12) % 2));
@@ -129,12 +142,11 @@ function streetWindow(h: number, gusPhase: 'back' | 'tell' | 'watch' | 'sleep', 
     ctx.fillStyle = C.ALERT;
     for (let y = 0; y < ground; y += 2) for (let x = (y >> 1) % 4; x < vw - 38; x += 4) ctx.fillRect(x, y, 1, 1);
   }
-  // me
-  const mx = 2 + Math.round(x01 * (vw - 56));
-  blit(ctx, playerSprite(look, frameMe), mx, ground - 15);
+  blit(ctx, playerSprite(look, frameMe), spriteX(x01), ground - 15);
   ctx.restore();
+  if (inBeam && Math.floor(t * 8) % 2) { rect(ctx, 2, y0, W - 4, 2, C.ALERT); rect(ctx, 2, y0 + h - 2, W - 4, 2, C.ALERT); }
   // name tag at 1x so the type stays crisp
-  const tagX = ix + (2 + Math.round(x01 * (Math.ceil(iw / 2) - 56))) * 2 + 2;
+  const tagX = ix + spriteX(x01) * 2 + 2;
   const tagY = iy + (Math.ceil(ih / 2) - 8 - 15) * 2 - 12;
   rect(ctx, tagX, tagY, textWidth('YOU') + 4, 9, C.INK);
   drawText(ctx, 'YOU', tagX + 2, tagY + 1, C.SAFE);
@@ -161,8 +173,8 @@ function bigButton(cx: number, cy: number, r: number, top: string, bottom: strin
   hit('big', cx - r, cy - r, r * 2, r * 2 + 4);
 }
 
-function progressBar(y: number) {
-  drawText(ctx, 'LINE', 6, y + 1, C.STONE_HI);
+function progressBar(y: number, label = 'LINE') {
+  drawText(ctx, label, 6, y + 1, C.STONE_HI);
   meter(ctx, 32, y, W - 70, 9, progress, C.SAFE, 12);
   drawText(ctx, 'DOOR', W - 33, y + 1, C.LAMP);
 }
@@ -192,7 +204,7 @@ function drawJoin() {
   }
   // join
   const by = Math.max(my + 30, scr.h - 70);
-  bigButtonRect('joinBtn', LIVE && joinSentAt >= 0 && t - joinSentAt < 2 ? 'JOINING...' : 'GET IN LINE', by);
+  bigButtonRect('joinBtn', LIVE && joinSentAt >= 0 && t - joinSentAt < 2 ? 'JOINING...' : LIVE && !roomCode ? 'PLAY SOLO' : 'GET IN LINE', by);
   if (LIVE && !netUp) drawTextCentered(ctx, 'LOOKING FOR THE CLUB...', W / 2, by - 12, C.STONE_HI);
 }
 
@@ -333,17 +345,16 @@ function drawResult(pass: boolean) {
   if (!LIVE && st > 2.6 && curtain < 0) go('sneak');
 }
 
-function drawNerd() {
+function drawNerd(left = Math.max(0, 5 - st)) {
   const strobe = Math.floor(t * 8) % 2;
   rect(ctx, 0, 0, W, scr.h, strobe ? C.ALERT : C.VELVET);
-  const left = Math.max(0, 5 - st);
   frame(ctx, 10, 40, W - 20, 92, C.PAPER, C.ALERT);
   drawTextCentered(ctx, 'NICE TRY,', W / 2, 54, C.ALERT, 2);
   drawTextCentered(ctx, 'NERD', W / 2, 74, C.ALERT, 3);
-  drawTextCentered(ctx, '25 TAPS A SECOND?', W / 2, 104, C.INK);
+  drawTextCentered(ctx, `${LIVE ? T.NERD_TAPS : 25} TAPS A SECOND?`, W / 2, 104, C.INK);
   drawTextCentered(ctx, 'SIT OUT', W / 2, 114, C.INK);
   drawTextCentered(ctx, `${Math.ceil(left)}`, W / 2, 150, C.PAPER, 4);
-  if (left <= 0) go('sneak');
+  if (!LIVE && left <= 0) go('sneak');
 }
 
 function drawOwner() {
@@ -436,39 +447,77 @@ function drawCaptcha() {
   }
 }
 
-function drawMugshot() {
-  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
-  const x = 12, y = 8, w = W - 24, h = Math.min(scr.h - 16, 270);
+const RECEIPT_X = 12, RECEIPT_W = W - 24, RECEIPT_H = 240;
+
+/** The personal mugshot receipt, drawn with its top edge at y. Used on the phone and for the PNG export. */
+function drawReceipt(mug: Mugshot, lk: PlayerLook, y: number) {
+  const x = RECEIPT_X, w = RECEIPT_W, h = RECEIPT_H;
   rect(ctx, x, y, w, h, C.PAPER);
   for (let i = 0; i < w; i += 4) { rect(ctx, x + i, y - 2, 2, 2, C.PAPER); rect(ctx, x + i + 2, y + h, 2, 2, C.PAPER); }
   drawTextCentered(ctx, 'CLUB VELVET', W / 2, y + 8, C.VELVET);
-  drawTextCentered(ctx, 'RECEIPT #0412', W / 2, y + 18, C.STONE);
+  drawTextCentered(ctx, `RECEIPT #${String(1000 + (Math.abs(mug.seed | 0) % 9000))}`, W / 2, y + 18, C.STONE);
   // lineup wall
   const lx = x + 10, ly = y + 30, lw = w - 20;
   rect(ctx, lx, ly, lw, 60, C.STONE_HI);
   for (let i = 0; i < 6; i++) { rect(ctx, lx, ly + 6 + i * 9, lw, 1, C.STONE); drawText(ctx, `${6 - i}`, lx + 2, ly + 2 + i * 9, C.STONE); }
-  blit(ctx, playerSprite(look, 'stand'), W / 2 - 24, ly + 6, false, 3);
-  rect(ctx, W / 2 - 22, ly + 50, 44, 9, C.INK);
-  drawTextCentered(ctx, MUGSHOT.name, W / 2, ly + 51, C.PAPER);
-  const rows: [string, string][] = [
-    ['TIMES CAUGHT', `${MUGSHOT.caught}`], ['BEST DANCE', `${MUGSHOT.bestDance}`], ['DISTANCE', MUGSHOT.distance],
-  ];
-  let ry = ly + 70;
+  blit(ctx, playerSprite(lk, 'stand'), W / 2 - 24, ly + 6, false, 3);
+  const pw = textWidth(mug.name) + 8;
+  rect(ctx, Math.round(W / 2 - pw / 2), ly + 50, pw, 9, C.INK);
+  drawTextCentered(ctx, mug.name, W / 2, ly + 51, C.PAPER);
+  const rows: [string, string][] = [['TIMES CAUGHT', `${mug.caught}`], ['BEST MOVES', `${mug.bestMicro}%`], ['DISTANCE', mug.distance]];
+  let ry = y + 100;
   for (const [k, v] of rows) {
     drawText(ctx, k, x + 8, ry, C.INK);
-    for (let dx = x + 8 + textWidth(k) + 2; dx < x + w - 10 - textWidth(v) - 2; dx += 3) rect(ctx, dx, ry + 6, 1, 1, C.STONE);
+    for (let dx = x + 8 + textWidth(k) + 4; dx < x + w - 10 - textWidth(v) - 2; dx += 3) rect(ctx, dx, ry + 6, 1, 1, C.STONE);
     drawText(ctx, v, x + w - 8 - textWidth(v), ry, C.INK);
     ry += 11;
   }
   rect(ctx, x + 8, ry + 2, w - 16, 1, C.INK);
   drawText(ctx, 'TITLE:', x + 8, ry + 8, C.STONE);
-  drawText(ctx, MUGSHOT.title, x + 8, ry + 17, C.INK);
-  wrap(`"${MUGSHOT.roast}"`, 19).forEach((l, i) => drawText(ctx, l, x + 8, ry + 31 + i * 9, C.VELVET));
-  // threat stamp
-  frame(ctx, x + w - 60, ry + 54, 52, 24, C.PAPER, C.ALERT);
-  drawTextCentered(ctx, 'THREAT', x + w - 34, ry + 59, C.ALERT);
-  drawTextCentered(ctx, MUGSHOT.threat, x + w - 34, ry + 68, C.ALERT);
-  if (Math.floor(t * 2) % 2) drawText(ctx, 'SCREENSHOT ME', x + 8, ry + 64, C.STONE);
+  const title = wrap(mug.title, 20).slice(0, 2);
+  title.forEach((l, i) => drawText(ctx, l, x + 8, ry + 17 + i * 9, C.INK));
+  let qy = ry + 19 + title.length * 9;
+  const roast = wrap(`"${mug.roast}"`, 20);
+  const maxLines = title.length > 1 ? 3 : 4;
+  const shown = roast.slice(0, maxLines);
+  if (roast.length > maxLines) shown[maxLines - 1] = shown[maxLines - 1].slice(0, 17) + '...';
+  shown.forEach((l, i) => drawText(ctx, l, x + 8, qy + i * 9, C.VELVET));
+  qy = y + 196;
+  rect(ctx, x + 8, qy, w - 16, 11, C.INK);
+  drawTextCentered(ctx, mug.rankLine, W / 2, qy + 2, C.LAMP);
+  frame(ctx, x + 14, qy + 17, w - 28, 18, C.PAPER, C.ALERT);
+  drawTextCentered(ctx, `THREAT: ${mug.threat}`, W / 2, qy + 23, C.ALERT);
+}
+
+function drawMugshot() {
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  drawReceipt({ name: MUGSHOT.name, seed: 412, caught: MUGSHOT.caught, passes: 1, bestMicro: MUGSHOT.bestDance, distance: MUGSHOT.distance, roast: MUGSHOT.roast, title: MUGSHOT.title, threat: MUGSHOT.threat as Mugshot['threat'], rankLine: '#3 OF 7' }, look, 8);
+  if (Math.floor(t * 2) % 2) drawTextCentered(ctx, 'SCREENSHOT ME', W / 2, RECEIPT_H + 24, C.STONE_HI);
+}
+
+/** Renders the receipt at 4x (hard pixels) and downloads it as a PNG. */
+function saveMugshot(mug: Mugshot, lk: PlayerLook) {
+  const pad = 8, h = RECEIPT_H + pad * 2 + 2;
+  const off = document.createElement('canvas');
+  off.width = W; off.height = h;
+  const octx = off.getContext('2d')!;
+  octx.imageSmoothingEnabled = false;
+  const live = ctx;
+  ctx = octx;
+  try { rect(ctx, 0, 0, W, h, C.NIGHT); drawReceipt(mug, lk, pad); } finally { ctx = live; }
+  const big = document.createElement('canvas');
+  big.width = W * 4; big.height = h * 4;
+  const bctx = big.getContext('2d')!;
+  bctx.imageSmoothingEnabled = false;
+  bctx.drawImage(off, 0, 0, big.width, big.height);
+  big.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'club-velvet-mugshot.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }, 'image/png');
 }
 
 function drawSolo() {
@@ -563,12 +612,13 @@ async function askMotion() {
 
 host.addEventListener('pointerdown', (e) => {
   unlock();
+  holdPtr = -1;
   e.preventDefault();
   try { host.setPointerCapture(e.pointerId); } catch { /* synthetic or already-lifted pointer */ }
   let { x, y } = scr.toLogical(e.clientX, e.clientY);
   if (state === 'flip') { x = W - x; y = scr.h - y; }
   const id = pick(x, y);
-  if (LIVE && liveDown(id, x, y)) return;
+  if (LIVE) { if (liveDown(id, x, y)) { if (holding) holdPtr = e.pointerId; return; } }
   if (state === 'dodge' && id === 'big' && dodge.moves < 3) {
     dodge.moves++; dodge.x = dodge.x < 80 ? 112 : 48; sfx.blip(); return;
   }
@@ -592,13 +642,19 @@ host.addEventListener('pointerdown', (e) => {
       if (id?.startsWith('power')) { const i = Number(id.slice(5)); if (cooldowns[i] <= 0) { cooldowns[i] = POWERS[i].cooldown; sfx.coin(); buzz(20); } }
   }
 });
-const release = () => {
-  if (LIVE) { liveUp(); return; }
+let holdPtr = -1;   // the finger that owns the HOLD button: other fingers lifting must not release it
+const release = (cancel = false) => {
+  if (LIVE) { liveUp(cancel); return; }
   if (holding && state === 'join') { holding = false; wipeTo('sneak'); return; }
   holding = false;
 };
-host.addEventListener('pointerup', release);
-host.addEventListener('pointercancel', release);
+const onUp = (e: PointerEvent, cancel: boolean) => {
+  if (LIVE && holdPtr >= 0 && e.pointerId !== holdPtr) return;
+  holdPtr = -1;
+  release(cancel);
+};
+host.addEventListener('pointerup', (e) => onUp(e, false));
+host.addEventListener('pointercancel', (e) => onUp(e, true));
 host.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // =====================================================================
@@ -606,6 +662,16 @@ host.addEventListener('contextmenu', (e) => e.preventDefault());
 // Nothing here is simulated locally except sparkle (coins, sfx, curtain).
 // =====================================================================
 let me: Me | null = null;
+// read-only hook for the browser end-to-end test (scripts/e2e.ts): where is a button, what does the server say
+(window as unknown as { __club: unknown }).__club = {
+  me: () => me,
+  target(id: string) {
+    const h = hits.find((x) => x.id === id);
+    if (!h) return null;
+    const r = scr.canvas.getBoundingClientRect();
+    return { x: r.left + ((h.x + h.w / 2) / scr.w) * r.width, y: r.top + ((h.y + h.h / 2) / scr.h) * r.height };
+  },
+};
 let netUp = false;
 let everUp = false;
 let role: PhoneRole = 'join';
@@ -615,12 +681,32 @@ let pressSent = false;
 let joinArmed = false;
 let joinSentAt = -1;
 let ruleSent = false;
+let rulePicked = -1;
+let revealMug = false;       // reveal / solo-done: false = result card, true = mugshot receipt
+let revealTouched = false;   // the player tapped, so stop auto-flipping
+let savedAt = -99;
+let wasInBeam = false;
+let shakeVis = 0;            // last shake energy, for the sprite jitter
+let lastShakeSend = 0;
+let sayN = -1;
+let sayAt = 0;
 
-const net = LIVE ? connect(() => ({ t: 'hello', role: 'phone', token: phoneToken() }), onServer, (up) => { netUp = up; everUp ||= up; }) : null;
+/** ?room=ABCD joins that room; no room param is the solo gauntlet. */
+const roomCode = (params.get('room') ?? '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+
+const sensors = LIVE ? createSensors(() => net?.send({ t: 'caps', motion: true })) : null;
+const net = LIVE
+  ? connect(
+    () => ({ t: 'hello', role: 'phone', token: phoneToken(), ...(roomCode ? { room: roomCode } : {}), motion: sensors?.ok ?? false }),
+    onServer,
+    (up) => { netUp = up; everUp ||= up; },
+  )
+  : null;
 
 function curtainFx() { if (curtain < 0) { curtain = 0; curtainNext = state; } }
 
 function onServer(m: ServerMsg) {
+  if (m.t === 'ping') { net?.send({ t: 'pong', n: m.n }); return; }
   if (m.t !== 'me') return;
   me = m;
   if (m.id) {
@@ -631,66 +717,106 @@ function onServer(m: ServerMsg) {
     const from = role;
     role = m.role; roleSince = t; st = 0;
     holding = false; micro.taps = 0; coins = [];
+    revealMug = false; revealTouched = false;
     onRoleChange(from, m);
   }
   if (m.role === 'sneak' && m.gus !== lastGus) {
-    if (m.gus === 'tell') { sfx.tell(); buzz(60); }
-    if (m.gus === 'watch') { sfx.turn(); buzz([90, 40, 90]); }
+    if (m.gus === 'tell') { sfx.tell(); haptic.tell(); }
+    if (m.gus === 'watch') { sfx.turn(); haptic.turn(); }
   }
   lastGus = m.gus;
 }
 
 function onRoleChange(from: PhoneRole, m: Me) {
-  if (m.role === 'caught') { sfx.caught(); buzz([200, 60, 200]); curtainFx(); }
-  if (m.role === 'result') { if (m.result?.pass) sfx.pass(); else sfx.fling(); }
-  if (m.role === 'owner-pick') { ruleSent = false; sfx.vip(); buzz([60, 40, 120]); curtainFx(); }
-  if (m.role === 'lounge' && from === 'sneak') sfx.vip();
+  if (m.role === 'caught') { sfx.caught(); haptic.caught(); curtainFx(); }
+  if (m.role === 'result') { if (m.result?.pass) { sfx.pass(); haptic.pass(); } else { sfx.fling(); haptic.fling(); } }
+  if (m.role === 'owner-pick') { ruleSent = false; rulePicked = -1; sfx.vip(); haptic.vip(); curtainFx(); }
+  if (m.role === 'lounge' && from === 'sneak') { sfx.vip(); haptic.vip(); }
   if (m.role === 'break' || m.role === 'defend') buzz([120, 60, 120]);
   if (m.role === 'support' || m.role === 'defending') { sfx.tell(); buzz(80); }
+  if (m.role === 'nerd') sfx.nerd();
+  if (m.role === 'solo-clear') { sfx.pass(); haptic.pass(); curtainFx(); }
+  if (m.role === 'solo-done') { sfx.vip(); haptic.vip(); curtainFx(); }
   if (m.role === 'reveal') { if (m.reveal?.winnerId === m.id) { sfx.vip(); buzz([80, 40, 80, 40, 200]); } else sfx.blip(true); curtainFx(); }
 }
 
 function liveDown(id: string | null, x: number, y: number): boolean {
   if (!net) return false;
+  const m = me;
   switch (id) {
     case 'joinBtn': holding = true; joinArmed = true; return true;
     case 'big':
       holding = true; sfx.blip();
       if (role === 'sneak') { net.send({ t: 'press' }); pressSent = true; }
-      if (role === 'support' && !me?.voted && t - roleSince >= 0.5) { net.send({ t: 'tap' }); buzz(40); }
+      if (role === 'support' && !m?.voted && t - roleSince >= 0.5) { net.send({ t: 'tap' }); haptic.tap(); }
       return true;
     case 'mash':
       holding = true; micro.taps++;
       net.send({ t: 'tap' });
       coins.push({ x: x - 3, y: y - 3, vy: -120 - Math.random() * 60, life: 0.8 });
       if (role === 'caught') sfx.coin(); else sfx.tap();
-      buzz(10);
+      haptic.tap();
       return true;
-    case 'rule0':
-      if (!ruleSent) { net.send({ t: 'rule', rule: 'moonwalk' }); ruleSent = true; sfx.vip(); buzz(30); }
-      return true;
+    case 'soloGo': location.href = 'play.html'; return true;
+    case 'menu': net.send({ t: 'solo', op: 'menu' }); sfx.blip(); return true;
+    case 'again': net.send({ t: 'solo', op: 'start', level: 0 }); sfx.vip(); return true;
+    case 'save': if (m?.mugshot) { saveMugshot(m.mugshot, look); savedAt = t; sfx.pass(); } return true;
+    case 'toggle': revealMug = !revealMug; revealTouched = true; sfx.blip(); return true;
+    default:
+      if (id?.startsWith('rule')) {
+        const i = Number(id.slice(4)), rule = m?.ruleChoices[i];
+        if (rule && !ruleSent) { net.send({ t: 'rule', rule }); ruleSent = true; rulePicked = i; sfx.vip(); haptic.vip(); }
+        return true;
+      }
+      if (id?.startsWith('power')) {
+        const pw = m?.powers[Number(id.slice(5))];
+        if (pw && pw.cd <= 0) { net.send({ t: 'power', power: pw.power }); sfx.coin(); buzz(20); }
+        return true;
+      }
+      if (id?.startsWith('lvl')) {
+        const i = Number(id.slice(3));
+        if (m?.solo && i <= m.solo.unlocked) { net.send({ t: 'solo', op: 'start', level: i }); sfx.vip(); haptic.tap(); }
+        return true;
+      }
   }
   return false;
 }
 
-function liveUp() {
+function liveUp(cancel = false) {
   if (joinArmed) {
     joinArmed = false;
-    if (net?.up) { net.send({ t: 'join', name: myName, seed }); joinSentAt = t; sfx.vip(); }
+    if (!cancel && net?.up) {
+      // pointerup is a user gesture: iOS shows its motion permission prompt here
+      void sensors?.request();
+      net.send({ t: 'join', name: myName, seed });
+      if (sensors?.ok) net.send({ t: 'caps', motion: true });
+      joinSentAt = t; sfx.vip();
+    }
   }
   if (pressSent) { net?.send({ t: 'release' }); pressSent = false; }
   holding = false;
 }
 
 const secs = (s: number) => `${Math.max(0, Math.ceil(s))}`;
+const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const lastCall = (m: Me) => secs(m.timeLeft - T.PUSH - T.VOTE);
 
 function drawLive(dt: number) {
-  if (!me || !me.id || role === 'join') drawJoin();
+  const shaking = !!me && role === 'caught' && me.micro === 'shake';
+  if (performance.now() - lastShakeSend >= 100) {
+    lastShakeSend = performance.now();
+    const e = sensors?.drain() ?? 0;
+    shakeVis = Math.max(e, shakeVis * 0.6);
+    if (shaking && sensors?.ok) net?.send({ t: 'shake', e });
+  }
+  if (me?.role === 'no-room') drawNoRoom(me);
+  else if (!me || !me.id || role === 'join') drawJoin();
   else switch (role) {
     case 'lobby': drawLiveLobby(); break;
     case 'sneak': drawLiveSneak(); break;
     case 'caught': drawLiveCaught(dt); break;
-    case 'result': resultLine = me.result?.line ?? ''; drawResult(!!me.result?.pass); break;
+    case 'result': resultLine = me.result?.line ?? ''; drawResult(!!me.result?.pass); soloMenuButton(false); break;
+    case 'nerd': drawNerd(me.nerdLeft); soloMenuButton(false); break;
     case 'owner-pick': drawLiveOwnerPick(); break;
     case 'lounge': drawLiveLounge(); break;
     case 'break': drawLivePush(false, dt); break;
@@ -699,11 +825,51 @@ function drawLive(dt: number) {
     case 'defending': drawLiveDefending(); break;
     case 'outside-vote': drawLiveOutsideVote(); break;
     case 'reveal': drawLiveReveal(); break;
+    case 'solo-menu': drawLiveSoloMenu(); break;
+    case 'solo-clear': drawLiveSoloClear(); break;
+    case 'solo-done': drawLiveSoloDone(); break;
   }
   if (!netUp && everUp) {
     rect(ctx, 0, 0, W, 12, C.ALERT);
     drawTextCentered(ctx, 'RECONNECTING...', W / 2, 3, C.PAPER);
   }
+}
+
+function drawNoRoom(m: Me) {
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, 72, C.VELVET);
+  drawTextCentered(ctx, 'ROOM', W / 2, 16, C.PAPER, 2);
+  drawTextCentered(ctx, m.code ?? roomCode, W / 2, 38, C.LAMP, 4);
+  drawTextCentered(ctx, 'IS CLOSED', W / 2, 84, C.PAPER, 2);
+  drawTextCentered(ctx, 'ASK FOR', W / 2, 108, C.STONE_HI);
+  drawTextCentered(ctx, 'THE NEW CODE', W / 2, 118, C.STONE_HI);
+  drawTextCentered(ctx, 'OR PLAY ON YOUR OWN', W / 2, 140, C.STONE_HI);
+  bigButtonRect('soloGo', 'PLAY SOLO', Math.max(158, Math.min(scr.h - 60, 170)));
+}
+
+/** Small corner button during any solo level. `top` puts it top-left (the stare-down keeps its bottom for tapping). */
+function soloMenuButton(top: boolean) {
+  if (!me?.solo) return;
+  const w = 44, h = 18;
+  const x = top ? 4 : W - w - 4, y = top ? 4 : scr.h - h - 4;
+  frame(ctx, x, y, w, h, C.PAPER, C.INK);
+  drawTextCentered(ctx, 'MENU', x + w / 2, y + 6, C.INK);
+  hit('menu', x - 2, y - 2, w + 4, h + 4);
+}
+
+/** Gus's latest line in a short box. */
+function clip(text: string, cols: number, lines: number) {
+  const ls = wrap(text, cols);
+  if (ls.length <= lines) return text;
+  const keep = ls.slice(0, lines);
+  keep[lines - 1] = keep[lines - 1].slice(0, cols - 3) + '...';
+  return keep.join(' ');
+}
+function sayStrip(y: number, h: number) {
+  const s = me?.say;
+  if (!s) return;
+  if (s.n !== sayN) { sayN = s.n; sayAt = t; }
+  textBox(ctx, 4, y, W - 8, h, clip(s.text, Math.floor((W - 22) / 6), Math.floor((h - 10) / 10)), (t - sayAt) * 40, t, s.who === 'LIVE' ? 'LIVE' : 'GUS', false);
 }
 
 function avatarCard(y: number, frameMe: PlayerFrame) {
@@ -727,29 +893,65 @@ function drawLiveLobby() {
   if (Math.floor(t * 2) % 2) drawTextCentered(ctx, 'WAITING FOR THE HOST', W / 2, Math.max(y + 48, scr.h - 16), C.PAPER);
 }
 
+const STRIP_H = 20;
+/** The rule-specific banner under the progress bar. null = nothing to say. */
+function ruleStrip(m: Me, inBeam: boolean): { lines: string[]; fill: string; ink: string } | null {
+  switch (m.rule) {
+    case 'moonwalk': {
+      const by = `${m.ruleBy ?? 'THE DOOR'} PICKED MOONWALK`;
+      return { lines: [by.length <= 26 ? by : 'MOONWALK PICKED'], fill: C.NEON, ink: C.INK };
+    }
+    case 'lights':
+      if (m.beam == null) return null;
+      return inBeam
+        ? { lines: ["YOU'RE IN THE BEAM"], fill: Math.floor(t * 8) % 2 ? C.ALERT : C.PAPER, ink: Math.floor(t * 8) % 2 ? C.PAPER : C.ALERT }
+        : { lines: ['DARK: KEEP MOVING'], fill: C.ASPHALT_HI, ink: C.LAMP };
+    case 'glasses': return { lines: ['NEW GLASSES:', 'SHORT WARNINGS'], fill: C.LAMP, ink: C.INK };
+    case 'disco': return { lines: ['DISCO: FAST TURNS'], fill: C.VELVET, ink: C.PAPER };
+    default: return null;
+  }
+}
+
 function drawLiveSneak() {
   const m = me!;
   const moon = m.rule === 'moonwalk';
-  const watching = m.gus === 'watch', telling = m.gus === 'tell', napping = m.gus === 'sleep';
+  const lights = m.rule === 'lights' && m.beam != null;
+  const inBeam = lights && Math.abs(m.x - m.beam!) < T.BEAM_HALF;
+  if (inBeam && !wasInBeam) buzz(30);
+  wasInBeam = inBeam;
+  const lv = m.solo ? m.solo.levels[m.solo.level] : null;
+  const telling = m.gus === 'tell', napping = m.gus === 'sleep';
+  // Lights Out: Gus only sees the beam, so outside it a watching Gus is no danger
+  const watching = m.gus === 'watch' && (!lights || inBeam);
   const bg = watching ? (Math.floor(t * 6) % 2 ? C.ALERT : C.VELVET) : telling ? C.LAMP_LO : C.NIGHT;
   rect(ctx, 0, 0, W, scr.h, bg);
+  if (m.rule === 'disco' && !watching && !telling) {
+    const beat = Math.floor(t * 4);
+    dither(ctx, 0, 0, W, scr.h, beat % 2 ? C.VELVET : C.ASPHALT_HI, beat);
+  }
   progress = m.x;
   const fr: PlayerFrame = watching && m.moving ? 'caught' : m.moving ? (Math.floor(t * 8) % 2 ? 'sneakA' : 'sneakB') : 'freeze';
-  const wy = streetWindow(Math.round(scr.h * 0.36), m.gus, fr, m.x);
+  const wy = streetWindow(Math.round(scr.h * 0.36), m.gus, fr, m.x, lights ? m.beam : null, inBeam);
   const status = watching ? (moon ? "HE'S LOOKING. HOLD ON!" : "HE'S LOOKING. FREEZE!")
     : telling ? 'HE MIGHT TURN...'
     : m.needFreshPress && moon ? 'TOUCH TO START AGAIN'
     : napping ? 'GUS IS NAPPING. GO!'
+    : m.gus === 'watch' ? "DARK: HE CAN'T SEE YOU"
     : moon ? 'MOONWALK: LET GO TO MOVE'
+    : lv ? `${lv.name}: ${lv.guard}`
     : 'GUS IS ON HIS PHONE';
   statusLine(wy + 4, status, watching ? C.ALERT : telling ? C.LAMP : moon ? C.NEON : C.SAFE);
-  progressBar(wy + 20);
-  const top = wy + 34;
-  if (moon) {
-    rect(ctx, 0, top, W, 11, C.NEON);
-    drawTextCentered(ctx, `${m.ruleBy ?? 'THE DOOR'} PICKED MOONWALK`, W / 2, top + 2, C.INK);
+  progressBar(wy + 20, m.solo ? `${m.solo.level + 1}/${m.solo.levels.length}` : 'LINE');
+  let top = wy + 34;
+  const strip = ruleStrip(m, inBeam);
+  if (strip) {
+    rect(ctx, 0, top, W, STRIP_H, strip.fill);
+    const y0 = top + Math.round((STRIP_H - (strip.lines.length * 9 - 2)) / 2);
+    strip.lines.forEach((l, i) => drawTextCentered(ctx, l, W / 2, y0 + i * 9, strip.ink));
+    top += STRIP_H + 2;
   }
-  const cy = Math.round(top + 6 + (scr.h - top - 22) / 2);
+  const bottom = scr.h - 24;
+  const cy = Math.round(top + 2 + (bottom - top - 4) / 2);
   const color = watching ? C.PAPER : telling ? C.LAMP : moon ? C.NEON : C.SAFE;
   if (moon) {
     // Moonwalk under a held thumb: the first thing to read is LET GO. Once moving, the job is HOLD TO FREEZE.
@@ -757,13 +959,23 @@ function drawLiveSneak() {
     if (m.needFreshPress) bigButton(W / 2, cy, 46, 'TAP', 'THEN LET GO', color);
     else if (holding && !danger) bigButton(W / 2, cy, 46, 'LET GO', 'TO MOVE', C.SAFE);
     else bigButton(W / 2, cy, 46, 'HOLD', danger ? "DON'T LET GO" : 'TO FREEZE', color);
-  }
-  else bigButton(W / 2, cy, 46, watching ? 'FREEZE' : 'HOLD', watching ? "DON'T MOVE" : 'TO SNEAK', color);
-  drawTextCentered(ctx, `LAST CALL IN ${secs(m.timeLeft - T.PUSH - T.VOTE)}S`, W / 2, scr.h - 12, watching ? C.PAPER : C.STONE_HI);
+  } else bigButton(W / 2, cy, 46, watching ? 'FREEZE' : 'HOLD', watching ? "DON'T MOVE" : 'TO SNEAK', color);
+  // Gus's last line, only when the screen is tall enough not to crowd the button
+  if (bottom - (cy + 50) >= 40) sayStrip(cy + 52 + Math.floor((bottom - cy - 52 - 36) / 2), 36);
+  if (m.solo) {
+    drawText(ctx, `CAUGHT ${m.solo.catches}  ${fmtTime(m.solo.time)}`, 6, scr.h - 14, watching ? C.PAPER : C.STONE_HI);
+    soloMenuButton(false);
+  } else drawTextCentered(ctx, `LAST CALL IN ${lastCall(m)}S`, W / 2, scr.h - 12, watching ? C.PAPER : C.STONE_HI);
 }
 
 function drawLiveCaught(dt: number) {
   const m = me!;
+  if (m.micro === 'shake') drawLiveShake(m);
+  else drawLiveMash(m, dt);
+  soloMenuButton(true);
+}
+
+function drawLiveMash(m: Me, dt: number) {
   stareHeader('BRIBE ME. FASTER.');
   const y = 110;
   drawTextCentered(ctx, 'MASH!', W / 2, y, C.LAMP, 3);
@@ -782,6 +994,23 @@ function drawLiveCaught(dt: number) {
   drawTextCentered(ctx, secs(left), W / 2, Math.min(scr.h - 30, cy + 80), left < 2 ? C.ALERT : C.PAPER, 3);
 }
 
+function drawLiveShake(m: Me) {
+  stareHeader('YOU. DANCE FOR ME.');
+  hit('mash', 0, 0, W, scr.h);   // taps anywhere count too: the no-sensor fallback
+  const y = 112;
+  drawTextCentered(ctx, 'SHAKE!', W / 2, y, C.SAFE, 3);
+  const dx = Math.round(Math.sin(t * 40) * Math.max(shakeVis, holding ? 0.4 : 0) * 6);
+  blit(ctx, playerSprite(look, Math.floor(t * 10) % 2 ? 'cheer' : 'stand'), 56 + dx, y + 30, false, 3);
+  const v = m.microScore;
+  meter(ctx, 12, y + 86, W - 24, 12, v, v >= 1 ? C.SAFE : C.LAMP, 10);
+  drawText(ctx, 'NERVE', 12, y + 101, C.STONE_HI);
+  drawText(ctx, 'PASS', W - 12 - textWidth('PASS'), y + 101, C.SAFE);
+  const left = m.microLeft;
+  drawTextCentered(ctx, secs(left), W / 2, y + 116, left < 2 ? C.ALERT : C.PAPER, 3);
+  const noSensor = !sensors?.ok;
+  drawTextCentered(ctx, 'NO SENSOR? TAP!', W / 2, y + 144, noSensor && Math.floor(t * 3) % 2 ? C.PAPER : C.STONE_HI);
+}
+
 function drawLiveOwnerPick() {
   const m = me!;
   rect(ctx, 0, 0, W, scr.h, C.NIGHT);
@@ -792,19 +1021,27 @@ function drawLiveOwnerPick() {
   const fw = Math.round((W - 24) * Math.min(1, left / T.OWNER_PICK));
   rect(ctx, 12, 54, W - 24, 3, C.ASPHALT);
   rect(ctx, 12, 54, fw, 3, C.PAPER);
-  if (left > 0) rect(ctx, 12 + fw - 1, 52 + (Math.floor(t * 12) % 2), 3, 3, C.LAMP);
+  if (left > 0) { rect(ctx, 12 + fw - 1, 52 + (Math.floor(t * 12) % 2), 3, 3, C.LAMP); rect(ctx, 12 + fw, 51 - (Math.floor(t * 9) % 2), 1, 1, C.ALERT); }
   drawText(ctx, `${secs(left)}S`, W - 26, 60, C.STONE_HI);
   drawText(ctx, 'PICK A RULE:', 12, 64, C.PAPER);
-  const y = 78, h = 96;
-  frame(ctx, 8, y, W - 16, h, ruleSent ? C.LAMP : C.PAPER);
-  if (ruleSent || Math.floor(t * 2) % 2) drawText(ctx, '>', 14, y + 10, C.INK);
-  drawText(ctx, 'MOONWALK', 24, y + 8, C.INK, 2);
-  drawText(ctx, 'EVERYONE OUTSIDE:', 16, y + 32, C.VELVET);
-  drawText(ctx, 'LET GO TO MOVE.', 16, y + 44, C.INK);
-  drawText(ctx, 'HOLD TO FREEZE.', 16, y + 54, C.INK);
-  drawText(ctx, ruleSent ? 'SENDING...' : 'TAP TO PICK', 16, y + 74, ruleSent ? C.VELVET : C.STONE);
-  hit('rule0', 8, y, W - 16, h);
-  drawTextCentered(ctx, 'NO PICK = MOONWALK', W / 2, y + h + 12, C.STONE_HI);
+  const choices = m.ruleChoices.slice(0, 3);
+  const rowH = Math.max(46, Math.min(62, Math.floor((scr.h - 78 - 36) / Math.max(1, choices.length)) - 6));
+  choices.forEach((rule, i) => {
+    const y = 78 + i * (rowH + 6);
+    const sel = rulePicked === i;
+    const def = RULES[rule];
+    frame(ctx, 8, y, W - 16, rowH, sel ? C.LAMP : ruleSent ? C.STONE_HI : C.PAPER);
+    if (sel || (!ruleSent && Math.floor(t * 2) % 3 === i)) drawText(ctx, '>', 13, y + 9, C.INK);
+    drawText(ctx, def.name, 22, y + 9, C.INK);
+    def.blurb.forEach((l, j) => drawText(ctx, l, 14, y + 22 + j * 10, sel ? C.INK : C.VELVET));
+    if (!ruleSent) hit(`rule${i}`, 8, y, W - 16, rowH);
+  });
+  const by = 78 + choices.length * (rowH + 6) + 2;
+  if (ruleSent) drawTextCentered(ctx, 'RULE SENT', W / 2, by + 4, C.SAFE);
+  else {
+    frame(ctx, 14, by, W - 28, 18, C.NIGHT, C.PAPER);
+    drawTextCentered(ctx, 'NO PICK = RANDOM', W / 2, by + 6, C.STONE_HI);
+  }
 }
 
 const CROWN = (scale: number, x: number, y: number) => blit(ctx, sprite('pw3', POWER_ICONS[3], { k: C.INK, y: C.LAMP, w: C.PAPER }), x, y, false, scale);
@@ -812,24 +1049,43 @@ const CROWN = (scale: number, x: number, y: number) => blit(ctx, sprite('pw3', P
 function drawLiveLounge() {
   const m = me!;
   rect(ctx, 0, 0, W, scr.h, C.NIGHT);
-  dither(ctx, 0, 0, W, 44, Math.floor(t * 4) % 2 ? C.NEON : C.VELVET, Math.floor(t * 4));
-  drawTextCentered(ctx, 'VIP LOUNGE', W / 2, 10, C.LAMP, 2);
-  drawTextCentered(ctx, m.isOwner ? 'YOU RUN THE DOOR' : `THE DOOR: ${m.ownerName ?? '?'}`, W / 2, 30, C.PAPER);
-  if (m.isOwner) CROWN(3, W / 2 - 12, 50);
-  blit(ctx, playerSprite(look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand'), W / 2 - 24, 76, false, 3);
-  const y = 134;
-  frame(ctx, 8, y, W - 16, 40, C.PAPER);
-  if (m.rule === 'moonwalk') {
-    drawTextCentered(ctx, 'RULE: MOONWALK', W / 2, y + 8, C.VELVET);
-    drawTextCentered(ctx, m.isOwner ? 'THEY HAVE TO LET GO' : 'THE LINE MUST LET GO', W / 2, y + 22, C.INK);
+  dither(ctx, 0, 0, W, 36, Math.floor(t * 4) % 2 ? C.NEON : C.VELVET, Math.floor(t * 4));
+  drawTextCentered(ctx, 'VIP LOUNGE', W / 2, 5, C.LAMP, 2);
+  const line = m.isOwner ? 'YOU RUN THE DOOR' : `THE DOOR: ${m.ownerName ?? '?'}`;
+  drawTextCentered(ctx, line, W / 2, 24, C.PAPER);
+  if (m.isOwner) CROWN(1, Math.round(W / 2 - textWidth(line) / 2 - 11), 23);
+  // the three powers: big rows, cooldown from the server
+  m.powers.slice(0, 3).forEach((pw, i) => {
+    const def = POWER_DEFS[pw.power];
+    const y = 42 + i * 38, w = W - 16, ready = pw.cd <= 0;
+    frame(ctx, 8, y, w, 34, ready ? C.PAPER : C.STONE);
+    blit(ctx, sprite(`pw${i}`, POWER_ICONS[i], { k: C.INK, y: C.LAMP, w: C.PAPER }), 15, y + 5, false, 3);
+    drawText(ctx, def.name, 46, y + 9, C.INK);
+    drawText(ctx, def.blurb, 46, y + 20, ready ? C.VELVET : C.ASPHALT);
+    if (!ready) {
+      const max = T.POWER_COOLDOWN[pw.power] ?? 10;
+      const dw = Math.round((w - 8) * Math.min(1, pw.cd / max));
+      dither(ctx, 12 + (w - 8) - dw, y + 4, dw, 26, C.INK);
+      rect(ctx, W - 40, y + 8, 24, 18, C.INK);
+      drawTextCentered(ctx, secs(pw.cd), W - 28, y + 11, C.PAPER, 2);
+    }
+    hit(`power${i}`, 8, y, w, 34);
+  });
+  const y = 160;
+  frame(ctx, 8, y, W - 16, 32, C.PAPER);
+  if (m.rule) {
+    drawTextCentered(ctx, `RULE: ${RULES[m.rule].name}`, W / 2, y + 8, C.VELVET);
+    drawTextCentered(ctx, RULES[m.rule].banner, W / 2, y + 19, C.INK);
   } else {
     drawTextCentered(ctx, 'NO RULE YET', W / 2, y + 8, C.STONE);
-    drawTextCentered(ctx, `${m.ownerName ?? 'THE DOOR'} IS PICKING`, W / 2, y + 22, C.INK);
+    drawTextCentered(ctx, `${m.ownerName ?? 'THE DOOR'} IS PICKING`.slice(0, 24), W / 2, y + 19, C.INK);
   }
-  drawTextCentered(ctx, `SCORE ${m.score}`, W / 2, y + 50, C.LAMP);
-  drawTextCentered(ctx, `LAST CALL IN ${secs(m.timeLeft - T.PUSH - T.VOTE)}S`, W / 2, y + 64, C.STONE_HI);
-  wrap('AT LAST CALL: GUARD THE ROPE, THEN THE LOUNGE VOTES ON THE CROWN', 24)
-    .forEach((l, i) => drawTextCentered(ctx, l, W / 2, y + 82 + i * 9, C.STONE));
+  drawTextCentered(ctx, `SCORE ${m.score}`, W / 2, y + 42, C.LAMP);
+  drawTextCentered(ctx, `LAST CALL IN ${lastCall(m)}S`, W / 2, y + 54, C.STONE_HI);
+  const sy = y + 68;
+  if (scr.h - sy >= 40 && m.say) sayStrip(sy, Math.min(40, scr.h - sy - 6));
+  else if (scr.h - sy >= 36) wrap('AT LAST CALL: GUARD THE ROPE, THEN THE LOUNGE VOTES ON THE CROWN', 24)
+    .forEach((l, i) => drawTextCentered(ctx, l, W / 2, sy + 4 + i * 9, C.STONE));
 }
 
 function drawLivePush(defend: boolean, dt: number) {
@@ -904,8 +1160,25 @@ function drawLiveOutsideVote() {
   drawTextCentered(ctx, secs(m.timeLeft), W / 2, scr.h - 26, C.PAPER, 2);
 }
 
+// ---------- reveal, mugshot, solo ----------
+/** The mugshot receipt with its buttons. `again` adds PLAY AGAIN (solo). */
+function drawMugView(m: Me, again: boolean) {
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  hit('toggle', 0, 0, W, scr.h);
+  drawReceipt(m.mugshot!, look, 6);
+  const by = Math.min(6 + RECEIPT_H + 10, scr.h - 32);
+  const saved = t - savedAt < 2;
+  if (again) {
+    button('save', saved ? 'SAVED' : 'SAVE', 8, by, 52, 26, saved ? C.SAFE : C.LAMP);
+    button('again', 'PLAY AGAIN', 66, by, 86, 26, C.NEON);
+  } else button('save', saved ? 'SAVED' : 'SAVE PNG', 8, by, W - 16, 26, saved ? C.SAFE : C.LAMP);
+  if (by + 36 <= scr.h) drawTextCentered(ctx, 'TAP ELSEWHERE: BACK', W / 2, by + 32, C.STONE_HI);
+}
+
 function drawLiveReveal() {
   const m = me!;
+  if (m.mugshot && !revealTouched && st > 3) revealMug = true;
+  if (m.mugshot && revealMug) { drawMugView(m, false); return; }
   const r = m.reveal;
   const win = !!r && r.winnerId === m.id;
   if (win) {
@@ -940,7 +1213,76 @@ function drawLiveReveal() {
       drawTextCentered(ctx, mine ? 'AT THE BUZZER' : r.prevOwnerName, W / 2, 174, C.INK);
     }
   }
-  drawTextCentered(ctx, 'WATCH THE BIG SCREEN', W / 2, scr.h - 14, C.PAPER);
+  rect(ctx, 0, scr.h - 20, W, 20, C.INK);
+  if (m.mugshot) {
+    hit('toggle', 0, 0, W, scr.h);
+    drawTextCentered(ctx, Math.floor(t * 2) % 2 ? 'TAP FOR MY MUGSHOT' : 'WATCH THE BIG SCREEN', W / 2, scr.h - 14, C.PAPER);
+  } else drawTextCentered(ctx, 'WATCH THE BIG SCREEN', W / 2, scr.h - 14, C.PAPER);
+}
+
+function drawCheck(x: number, y: number) {
+  rect(ctx, x, y, 11, 11, C.INK);
+  for (const [px, py] of [[2, 5], [3, 6], [4, 7], [5, 6], [6, 5], [7, 4], [8, 3]]) rect(ctx, x + px, y + py - 1, 1, 2, C.SAFE);
+}
+
+function drawLiveSoloMenu() {
+  const sv = me!.solo!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  drawTextCentered(ctx, 'SOLO NIGHT', W / 2, 12, C.NEON, 2);
+  drawTextCentered(ctx, 'NOBODY ELSE HERE. 3 DOORS.', W / 2, 32, C.STONE_HI);
+  sv.levels.forEach((lv, i) => {
+    const y = 50 + i * 64;
+    const locked = i > sv.unlocked;
+    frame(ctx, 8, y, W - 16, 58, locked ? C.STONE : C.PAPER);
+    drawText(ctx, `${i + 1}. ${lv.name}`, 16, y + 9, locked ? C.ASPHALT : C.INK);
+    drawText(ctx, `DOOR: ${lv.guard}`, 16, y + 21, locked ? C.ASPHALT : C.VELVET);
+    wrap(lv.note, 22).slice(0, 2).forEach((l, j) => drawText(ctx, l, 16, y + 33 + j * 9, locked ? C.ASPHALT : C.STONE));
+    if (locked) drawText(ctx, 'LOCKED', W - 58, y + 9, C.ASPHALT);
+    else {
+      if (lv.cleared) drawCheck(W - 28, y + 8);
+      else if (Math.floor(t * 2) % 2) drawText(ctx, '>', W - 24, y + 9, C.INK);
+      hit(`lvl${i}`, 8, y, W - 16, 58);
+    }
+  });
+  const by = 50 + sv.levels.length * 64 + 2;
+  if (sv.catches > 0 || sv.time > 0) drawTextCentered(ctx, `CAUGHT ${sv.catches}  TIME ${fmtTime(sv.time)}`, W / 2, Math.min(by, scr.h - 14), C.STONE_HI);
+}
+
+function drawLiveSoloClear() {
+  const sv = me!.solo!;
+  const lv = sv.levels[sv.level], next = sv.levels[sv.level + 1];
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, scr.h, Math.floor(t * 6) % 2 ? C.ASPHALT : C.ASPHALT_HI, Math.floor(t * 6));
+  frame(ctx, 8, 36, W - 16, 150, C.PAPER, C.INK);
+  drawTextCentered(ctx, 'DOOR', W / 2, 50, C.VELVET, 3);
+  drawTextCentered(ctx, 'CLEARED', W / 2, 74, C.VELVET, 3);
+  blit(ctx, playerSprite(look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand'), W / 2 - 24, 100, false, 3);
+  drawTextCentered(ctx, `${lv.name} IS DONE`, W / 2, 152, C.INK);
+  if (next) {
+    drawTextCentered(ctx, 'NEXT DOOR:', W / 2, 166, C.STONE);
+    drawTextCentered(ctx, `${next.name}: ${next.guard}`.slice(0, 24), W / 2, 176, C.VELVET);
+  }
+}
+
+function drawLiveSoloDone() {
+  const m = me!;
+  const sv = m.solo!;
+  if (m.mugshot && !revealTouched && st > 4) revealMug = true;
+  if (m.mugshot && revealMug) { drawMugView(m, true); return; }
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, scr.h, Math.floor(t * 8) % 2 ? C.LAMP : C.LAMP_LO, Math.floor(t * 8));
+  frame(ctx, 8, 14, W - 16, 150, C.PAPER, C.ALERT);
+  drawTextCentered(ctx, 'BOUNCER', W / 2, 26, C.ALERT, 3);
+  drawTextCentered(ctx, 'BEATEN', W / 2, 50, C.ALERT, 3);
+  blit(ctx, playerSprite(look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand'), W / 2 - 24, 78, false, 3);
+  drawTextCentered(ctx, `TIME ${fmtTime(sv.time)}`, W / 2, 130, C.INK, 2);
+  drawTextCentered(ctx, `${sv.catches} ${sv.catches === 1 ? 'CATCH' : 'CATCHES'}`, W / 2, 150, C.VELVET);
+  if (m.mugshot) {
+    hit('toggle', 0, 0, W, scr.h);
+    rect(ctx, 0, 172, W, 14, C.INK);
+    if (Math.floor(t * 2) % 2) drawTextCentered(ctx, 'TAP FOR MY MUGSHOT', W / 2, 176, C.PAPER);
+  }
+  bigButtonRect('again', 'PLAY AGAIN', Math.max(190, Math.min(scr.h - 50, 196)));
 }
 
 // ---------- loop ----------
@@ -973,6 +1315,7 @@ function loop(now: number) {
   drawCurtain(dt);
   requestAnimationFrame(loop);
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { holdPtr = -1; release(true); } });
+addEventListener('blur', () => { holdPtr = -1; if (LIVE) release(true); });
 go((params.get('state') as S) || 'join');
 requestAnimationFrame(loop);

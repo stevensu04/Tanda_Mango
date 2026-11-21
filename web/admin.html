@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLUB VELVET — host</title>
+<style>
+:root { --night:#1d1633; --panel:#2a2047; --line:#4a3b78; --paper:#f4ecd6; --dim:#a99fc4; --neon:#ff4f9a; --lamp:#ffd25e; --safe:#5ff0c8; --alert:#ff4a3d; }
+* { box-sizing: border-box; border-radius: 0; }
+html, body { margin: 0; background: var(--night); color: var(--paper); font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+body { padding: 12px; max-width: 980px; margin: 0 auto; }
+h1 { font-size: 16px; letter-spacing: 2px; margin: 0; color: var(--neon); }
+h2 { font-size: 12px; letter-spacing: 2px; margin: 0 0 8px; color: var(--lamp); text-transform: uppercase; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
+section { background: var(--panel); border: 2px solid var(--line); padding: 12px; margin-bottom: 12px; }
+button, input { font: inherit; color: var(--paper); background: var(--night); border: 2px solid var(--paper); padding: 8px 12px; min-height: 40px; }
+button { cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
+button:hover:not(:disabled) { background: var(--paper); color: var(--night); }
+button:disabled { opacity: .35; cursor: not-allowed; }
+button.go { background: var(--safe); color: var(--night); border-color: var(--safe); font-weight: bold; }
+button.go:hover:not(:disabled) { background: var(--paper); border-color: var(--paper); }
+button.warn { border-color: var(--alert); color: var(--alert); }
+button.warn:hover:not(:disabled) { background: var(--alert); color: var(--night); }
+button.sel { background: var(--neon); border-color: var(--neon); color: var(--night); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dim { color: var(--dim); }
+.status { font-size: 12px; padding: 4px 8px; border: 2px solid var(--safe); color: var(--safe); }
+.status.down { border-color: var(--alert); color: var(--alert); }
+.big { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }
+.big .phase { font-size: 32px; color: var(--lamp); letter-spacing: 2px; }
+.big .time { font-size: 32px; color: var(--paper); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+a { color: var(--safe); word-break: break-all; }
+.links div { margin-top: 6px; }
+.set { margin-bottom: 14px; }
+.set label.t { display: block; margin-bottom: 4px; }
+.set input[type=range] { width: 100%; padding: 0; accent-color: var(--neon); }
+.set .opt { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; min-height: 36px; }
+.set input[type=radio], .set input[type=checkbox] { min-height: 0; width: 20px; height: 20px; accent-color: var(--neon); }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 11px; color: var(--dim); letter-spacing: 1px; padding: 4px 6px; }
+td { padding: 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+.dot { display: inline-block; width: 10px; height: 10px; background: var(--dim); }
+.dot.on { background: var(--safe); }
+.tag { font-size: 11px; padding: 1px 5px; border: 1px solid var(--lamp); color: var(--lamp); }
+.bar { width: 90px; height: 10px; border: 1px solid var(--paper); }
+.bar i { display: block; height: 100%; background: var(--neon); }
+td button { min-height: 30px; padding: 2px 8px; }
+.banner { background: var(--alert); color: var(--night); font-weight: bold; padding: 10px 12px; margin-bottom: 12px; border: 2px solid var(--paper); }
+section { min-width: 0; }
+dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; margin: 0; }
+dt { color: var(--dim); } dd { margin: 0; text-align: right; }
+.err { color: var(--alert); word-break: break-word; }
+@media (max-width: 700px) { td, th { padding: 6px 3px; } .bar { width: 44px; } td button { padding: 2px 6px; } body { padding: 8px; } }
+.hide { display: none !important; }
+</style></head>
+<body>
+<header><h1>CLUB VELVET / HOST</h1><span id="conn" class="status down">RECONNECTING…</span></header>
+<div id="nokey" class="banner hide">ANTHROPIC_API_KEY missing — Gus is using scripted lines. Copy .env.example to .env and add the key, then restart.</div>
+
+<section>
+  <h2>Room</h2>
+  <div id="rooms" class="row"></div>
+  <form id="codeform" class="row" style="margin-top:8px">
+    <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" size="6" />
+    <button type="submit">Open room</button>
+  </form>
+</section>
+
+<div id="roomui" class="hide">
+  <section>
+    <h2>Round — <span id="rcode"></span></h2>
+    <div class="big"><span class="phase" id="phase">—</span><span class="time" id="time">0:00</span></div>
+    <div class="row">
+      <button id="start" class="go">START ROUND</button>
+      <button id="reset" class="warn">RESET TO LOBBY</button>
+    </div>
+    <div class="links dim">
+      <div>PROJECTOR: <a id="lscreen" target="_blank" rel="noopener"></a></div>
+      <div>PHONES: <a id="lphone" target="_blank" rel="noopener"></a></div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <h2>Settings</h2>
+      <div class="set"><label class="t">Round length</label>
+        <span id="lens"></span>
+        <div class="dim" id="lennote">Locked while a round is running.</div></div>
+      <div class="set"><label class="t" for="diff">Difficulty: <b id="difflabel"></b></label>
+        <input id="diff" type="range" min="0.6" max="1.4" step="0.1" /></div>
+      <div class="set"><label class="opt"><input id="npcs" type="checkbox" /> NPC fill (pads small rooms)</label></div>
+      <div class="set"><label class="opt"><input id="ai" type="checkbox" /> Claude lines</label>
+        <div class="dim">Off = scripted lines only. Also the way to rehearse "Claude unreachable".</div></div>
+    </section>
+    <section>
+      <h2>Claude</h2>
+      <dl id="claude"></dl>
+      <div id="lasterr" class="err" style="margin-top:8px"></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Players (<span id="pcount">0</span>)</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>NAME</th><th>STATE</th><th>SCORE</th><th>PROGRESS</th><th></th></tr></thead>
+      <tbody id="players"></tbody></table></div>
+    <div id="noplayers" class="dim">No players yet.</div>
+  </section>
+</div>
+<div id="noroom" class="hide section dim">Pick a room above. Rooms are created when a projector (/screen.html) opens.</div>
+<script type="module" src="/src/admin.ts"></script>
+</body></html>

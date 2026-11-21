@@ -1,13 +1,14 @@
 import QRCode from 'qrcode';
 import { C } from './pix/palette';
 import { Screen, rect, dither, frame, textBox, meter, blit, nameTab, sprite } from './pix/pix';
-import { drawText, drawTextCentered, drawTextOutlined, textWidth } from './pix/font';
+import { drawText, drawTextCentered, drawTextOutlined, textWidth, wrap } from './pix/font';
 import { lookFromSeed, drawPlayer, icon, gusSprite, type PlayerLook, type PlayerFrame, type GusPose } from './pix/sprites';
 import { drawStreet, drawRope, drawGus, drawSightline, drawDarkness, drawCat, L } from './pix/scene';
-import { sfx, unlock } from './pix/sfx';
+import { sfx, unlock, setMuted } from './pix/sfx';
 import { devbar } from './devbar';
 import { NAMES, LINES, HUD, TICKER, RESULTS, CHAOS } from './mock';
 import { connect } from './net';
+import { T, RULES } from '../../shared/protocol';
 import type { Snapshot, PubPlayer, RoundPhase, ServerMsg } from '../../shared/protocol';
 
 // Linked to the room server by default. ?preview (or ?state=) keeps the offline design preview with its mock crowd.
@@ -100,8 +101,10 @@ function flashRed() { flash = 0.5; flashColor = C.ALERT; }
 const bar = LIVE ? null : devbar(STATES, (id) => enter(id as S));
 
 // ---------- QR ----------
-const joinUrl = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? __LAN_ORIGIN__ : location.origin) + '/play.html';
-const qr = QRCode.create(joinUrl, { errorCorrectionLevel: 'M' }).modules;
+const joinOrigin = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? __LAN_ORIGIN__ : location.origin;
+const makeQR = (code: string) => QRCode.create(`${joinOrigin}/play.html${code ? `?room=${code}` : ''}`, { errorCorrectionLevel: 'M' }).modules;
+let qr = makeQR(LIVE ? (params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) : '');
+function buildQR() { qr = makeQR(roomCode); }
 
 function drawQR(x: number, y: number, m: number) {
   const n = qr.size;
@@ -186,6 +189,7 @@ function curtainEdge(alpha: number) {
 // ---------- per-state draw ----------
 function draw(dt: number) {
   scr.fitFixed(host);
+  rect(ctx, 0, 0, L.W, L.H, C.INK);
   const sx = shake > 0 ? (Math.floor(t * 40) % 2 ? 2 : -2) : 0;
   shake = Math.max(0, shake - dt);
   ctx.save();
@@ -488,82 +492,139 @@ function drawAuto(dt: number): GusPose {
 
 // =====================================================================
 // LIVE: the projector draws only what the room server reports.
-// No mock crowd, no NPCs: every body on the street is a joined phone.
+// Every body on the street is a phone (or a server NPC); every line Gus speaks comes from the server.
 // =====================================================================
-interface LP { look: PlayerLook; seed: number; x: number; flingT: number; flingFrom: number; enterT: number; seenAt: number }
+interface LP { look: PlayerLook; seed: number; x: number; flingT: number; flingFrom: number; enterT: number; seenAt: number; bananaT: number; slipT: number }
 const lp = new Map<string, LP>();
 let snap: Snapshot | null = null;
+(window as unknown as { __club: unknown }).__club = { snap: () => snap };
 let netUp = false;
 let lastPhase: RoundPhase | null = null;
 let pointT = 0;
 let bannerMsg: { text: string; sub: string | null; fill: string; until: number } | null = null;
+let gusText: { text: string; color: string; until: number } | null = null;
+let roomCode = (params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+let lineWho = 'GUS';
+let gotSayEvent = false;
+let page = 0, pageShown = 0, pageWait = 0;
+let beatIdx = -1;
+let muted = false;
 const LIVE_LANES = [98, 112, 126, 140];
+const BANANA = sprite('banana', ['....kk..', '...kyk..', '..kyyk..', '.kyyk...', 'kyyk....', 'kyyyk...', '.kyyyykk', '..kkkk..'], { k: C.INK, y: C.LAMP, w: C.PAPER });
+const STARE_W = 100, STARE_H = 52, STARE_MAX = 3;
+const stare = Array.from({ length: STARE_MAX }, () => ({ name: '', x: 0, lane: 0, micro: 'mash' as string | null, score: 0, left: 0, bx: 0 }));
+let stareN = 0;
+const flyers = Array.from({ length: 8 }, () => ({ x: 0, y: 0 }));
+let bananaN = 0;
 
-const net = LIVE ? connect(() => ({ t: 'hello', role: 'screen' }), onServer, (up) => { netUp = up; }) : null;
+const net = LIVE ? connect(() => (roomCode ? { t: 'hello', role: 'screen', room: roomCode } : { t: 'hello', role: 'screen' }), onServer, (up) => { netUp = up; }) : null;
 
 function liveLane(i: number) { return LIVE_LANES[i % LIVE_LANES.length] - Math.floor(i / LIVE_LANES.length) * 6; }
 function toPx(x01: number) { return L.START_X + x01 * (L.ROPE_X - 10 - L.START_X); }
 function showBanner(text: string, sub: string | null, fill: string, secs: number) { bannerMsg = { text, sub, fill, until: t + secs }; }
 
+// ---------- Gus's voice: server lines in the box, deadpan TTS ----------
+function sayLive(text: string, who: string) { line = text; lineWho = who; shown = 0; page = 0; pageShown = 0; pageWait = 0; }
+
+const synth: SpeechSynthesis | null = typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined' ? speechSynthesis : null;
+let pending: string | null = null;
+let utter: SpeechSynthesisUtterance | null = null;
+function pickVoice(): SpeechSynthesisVoice | null {
+  if (!synth) return null;
+  const en = synth.getVoices().filter((v) => /^en/i.test(v.lang));
+  return en.find((v) => /male|david|daniel|george|mark|alex|fred|guy|james|ryan|thomas/i.test(v.name) && !/female/i.test(v.name)) ?? en[0] ?? null;
+}
+function speakNext() {
+  if (!synth || pending === null) return;
+  const text = pending; pending = null;
+  const u = new SpeechSynthesisUtterance(text.toLowerCase());
+  u.pitch = 0.4; u.rate = 0.95; u.volume = 1;
+  const v = pickVoice();
+  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+  u.onend = u.onerror = () => { if (utter === u) utter = null; speakNext(); };
+  utter = u;
+  try { synth.speak(u); } catch { utter = null; }
+}
+function speak(text: string) {
+  if (!synth || muted) return;
+  pending = text; // one slot: a newer line replaces an older pending one
+  if (!utter && !synth.speaking) speakNext();
+}
+function setMute(m: boolean) {
+  muted = m; setMuted(m);
+  if (m) { pending = null; try { synth?.cancel(); } catch { /* ignore */ } utter = null; }
+}
+
 function vis(p: PubPlayer): LP {
   let v = lp.get(p.id);
   if (!v || v.seed !== p.seed) {
-    v = { look: lookFromSeed(p.seed), seed: p.seed, x: toPx(p.x), flingT: -1, flingFrom: 0, enterT: -1, seenAt: t };
+    v = { look: lookFromSeed(p.seed), seed: p.seed, x: toPx(p.x), flingT: -1, flingFrom: 0, enterT: -1, seenAt: t, bananaT: -1, slipT: -1 };
     lp.set(p.id, v);
   }
   return v;
 }
 
 function onServer(m: ServerMsg) {
+  if (m.t === 'room') {
+    roomCode = m.code;
+    const u = new URL(location.href);
+    if (u.searchParams.get('room') !== m.code) { u.searchParams.set('room', m.code); history.replaceState(null, '', u.toString()); }
+    buildQR();
+    return;
+  }
   if (m.t === 'snap') {
     snap = m;
     if (m.phase !== lastPhase) onPhase(lastPhase, m);
     lastPhase = m.phase;
+    if (!gotSayEvent && m.say && m.say.text !== line) sayLive(m.say.text, m.say.who);
     for (const id of [...lp.keys()]) if (!m.players.some((p) => p.id === id)) lp.delete(id);
     return;
   }
   if (m.t !== 'ev') return;
   switch (m.kind) {
+    case 'say': gotSayEvent = true; sayLive(m.text, m.who); if (m.speak) speak(m.text); break;
     case 'tell': sfx.tell(); break;
     case 'turn': sfx.turn(); shake = 0.12; break;
-    case 'caught': say(`${m.name}. I SAW THAT. BRIBE ME.`); sfx.caught(); flashRed(); shake = 0.2; pointT = 0.8; break;
+    case 'fakeout': gusText = { text: '...NAH', color: C.PAPER, until: t + 0.8 }; break;
+    case 'nap': showBanner('GUS FELL ASLEEP', 'GO GO GO', C.SAFE, 2.5); break;
+    case 'caught': sfx.caught(); flashRed(); shake = 0.2; pointT = 0.8; break;
     case 'flung': {
       const v = lp.get(m.id);
       if (v) { v.flingT = 0; v.flingFrom = v.x; }
-      say(`${m.name}: BACK OF THE LINE.`); sfx.fling(); shake = 0.25;
+      sfx.fling(); shake = 0.25;
       break;
     }
-    case 'pass': say(`...FINE, ${m.name}. KEEP WALKING.`); sfx.pass(); break;
+    case 'pass': sfx.pass(); break;
     case 'entered': {
       const v = lp.get(m.id);
       if (v) v.enterT = 0;
       flash = 0.4; flashColor = C.LAMP; sfx.vip();
-      if (m.order > 1) say(`${m.name} IS IN. NUMBER ${m.order}.`);
       break;
     }
-    case 'owner': say(`${m.name} IS IN FIRST. ${m.name}, YOU RUN THE DOOR NOW.`); showBanner('NEW OWNER', `${m.name} RUNS THE DOOR`, C.LAMP, 3.5); break;
-    case 'rule': say(`${m.by} PICKED MOONWALK. LET GO TO MOVE. HOLD TO FREEZE.`); showBanner('MOONWALK!', 'RELEASE TO MOVE', C.NEON, 5); sfx.vip(); break;
+    case 'owner': showBanner('NEW OWNER', `${m.name} RUNS THE DOOR`, C.LAMP, 3.5); break;
+    case 'rule': showBanner(`${RULES[m.rule].name}!`, RULES[m.rule].banner, C.NEON, 5); sfx.vip(); break;
+    case 'nerd': showBanner('NICE TRY, NERD', `${m.name} SITS OUT ${T.NERD_FOR}S`, C.ALERT, 2.5); sfx.nerd(); break;
+    case 'power': {
+      if (m.power === 'banana' && m.targetId) {
+        const v = lp.get(m.targetId);
+        if (v) { v.bananaT = 0; v.slipT = -1; }
+      } else if (m.power === 'distract') gusText = { text: 'DISTRACTED!', color: C.LAMP, until: t + 1.5 };
+      else if (m.power === 'snitch') gusText = { text: 'SNITCH!', color: C.ALERT, until: t + 1.5 };
+      break;
+    }
     case 'rope':
-      if (m.snapped) { say('THE ROPE IS GONE. EVERYBODY IN. NOW VOTE.'); showBanner('ROPE SNAPPED!', 'EVERYONE RUSHES IN  X1.5', C.SAFE, 2.5); flash = 0.4; flashColor = C.SAFE; shake = 0.3; sfx.fling(); }
-      else { say('ROPE HELD. NOW THE LOUNGE VOTES ON THE CROWN.'); showBanner('ROPE HELD', 'THE LINE STAYS OUT', C.LAMP, 2.5); }
+      if (m.snapped) { showBanner('ROPE SNAPPED!', 'EVERYONE RUSHES IN  X1.5', C.SAFE, 2.5); flash = 0.4; flashColor = C.SAFE; shake = 0.3; sfx.fling(); }
+      else showBanner('ROPE HELD', 'THE LINE STAYS OUT', C.LAMP, 2.5);
       break;
   }
 }
 
 function onPhase(from: RoundPhase | null, m: Snapshot) {
   switch (m.phase) {
-    case 'lobby': bannerMsg = null; say('CLUB VELVET IS OPEN. SCAN THE CODE AND GET IN LINE. NO PUSHING.'); break;
-    case 'play': say('DOORS ARE OPEN. HOLD TO SNEAK. FREEZE WHEN I LOOK.'); sfx.turn(); break;
-    case 'push': say('LAST CALL! OUTSIDE: BREAK THE ROPE. LOUNGE: HOLD IT.'); sfx.nerd(); shake = 0.2; break;
-    case 'vote': break; // the rope event speaks
-    case 'reveal': {
-      const r = m.reveal;
-      flash = 0.6; flashColor = C.LAMP; sfx.vip();
-      if (!r?.winnerName) say('NOBODY GOT IN. GUS WINS AGAIN.');
-      else if (r.prevOwnerName) say(`${r.winnerName} TOOK THE CROWN FROM ${r.prevOwnerName}. LONG LIVE ${r.winnerName}.`);
-      else say(`${r.winnerName} KEPT THE CROWN. TONIGHT'S VIP.`);
-      break;
-    }
+    case 'lobby': bannerMsg = null; gusText = null; break;
+    case 'play': sfx.turn(); break;
+    case 'push': sfx.nerd(); shake = 0.2; break;
+    case 'reveal': flash = 0.6; flashColor = C.LAMP; sfx.vip(); break;
   }
   void from;
 }
@@ -580,6 +641,7 @@ function liveTag(text: string, x: number, lane: number, color: string, plate: st
 
 function drawLiveScreen(dt: number) {
   scr.fitFixed(host);
+  rect(ctx, 0, 0, L.W, L.H, C.INK); // clear: no flash or shake residue in the gaps
   const s = snap;
   const sx = shake > 0 ? (Math.floor(t * 40) % 2 ? 2 : -2) : 0;
   shake = Math.max(0, shake - dt);
@@ -589,14 +651,22 @@ function drawLiveScreen(dt: number) {
 
   const players = s?.players ?? [];
   const phase = s?.phase ?? 'lobby';
+  const rule = phase === 'play' ? s?.rule ?? null : null;
   const lounge = players.filter((p) => p.state === 'lounge').sort((a, b) => a.entryOrder - b.entryOrder);
   const entering = players.some((p) => (lp.get(p.id)?.enterT ?? -1) >= 0);
-  drawStreet(ctx, t, { lounge: lounge.length ? 1 : 0 });
+  const disco = rule === 'disco';
+  drawStreet(ctx, t, { lounge: lounge.length ? 1 : 0, disco });
   drawCat(ctx, t);
+
+  // disco beat: 8th notes at 120 bpm while the rule is live
+  if (disco) {
+    const bi = Math.floor(t * 4);
+    if (bi !== beatIdx) { beatIdx = bi; sfx.beat(bi); }
+  } else beatIdx = -1;
 
   let gus: GusPose = 'back';
   if (phase === 'lobby') gus = 'watch';
-  else if (phase === 'play') gus = pointT > 0 ? 'point' : s!.gus === 'sleep' ? 'sleep' : s!.gus;
+  else if (phase === 'play') gus = pointT > 0 ? 'point' : s!.gus === 'sleep' ? 'sleep' : s!.gus === 'back' && disco ? 'dance' : s!.gus;
   else if (phase === 'push') gus = 'point';
   else if (phase === 'vote') gus = s!.ropeSnapped ? 'sleep' : 'watch';
   else gus = s?.reveal?.winnerName ? 'flattered' : 'dance';
@@ -604,14 +674,15 @@ function drawLiveScreen(dt: number) {
 
   // bodies on the street, back lanes first
   const order = players.map((p, i) => ({ p, i, lane: liveLane(i) })).sort((a, b) => a.lane - b.lane);
-  const moon = s?.rule === 'moonwalk';
-  for (const { p, lane } of order) {
+  const moon = rule === 'moonwalk';
+  stareN = 0; bananaN = 0;
+  for (const { p, i, lane } of order) {
     const v = vis(p);
     if (phase === 'lobby') {
-      v.x = L.START_X + 4 + (players.indexOf(p) % 3) * 22 + Math.floor(players.indexOf(p) / 3) * 8;
+      v.x = L.START_X + 4 + (i % 3) * 22 + Math.floor(i / 3) * 8;
       if (t - v.seenAt < 0.3) blit(ctx, icon.puff(), v.x - 4, lane - 12);
-      drawPlayer(ctx, v.look, Math.floor(t * 2 + players.indexOf(p)) % 5 === 0 ? 'cheer' : 'stand', v.x, lane);
-      liveTag(p.name, v.x, lane, C.PAPER);
+      drawPlayer(ctx, v.look, Math.floor(t * 2 + i) % 5 === 0 ? 'cheer' : 'stand', v.x, lane);
+      liveTag(p.name, v.x, lane, p.npc ? C.STONE_HI : C.PAPER, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
       continue;
     }
     if (p.state === 'lounge') {
@@ -633,23 +704,60 @@ function drawLiveScreen(dt: number) {
       continue;
     }
     v.x += (toPx(p.x) - v.x) * Math.min(1, dt * 10);
+    // banana in flight, then a short slip
+    let slipping = false;
+    if (v.bananaT >= 0) {
+      v.bananaT += dt;
+      const u = Math.min(1, v.bananaT / 0.6);
+      const bx = L.GUS_X - 6 + (v.x - 4 - (L.GUS_X - 6)) * u;
+      const by = 56 + (lane - 14 - 56) * u - Math.round(Math.sin(u * Math.PI) * 30);
+      if (bananaN < flyers.length) { const f = flyers[bananaN++]; f.x = Math.round(bx); f.y = by; }
+      if (u >= 1) { v.bananaT = -1; v.slipT = 0; sfx.fling(); }
+    }
+    if (v.slipT >= 0) { v.slipT += dt; slipping = v.slipT < 0.8; if (!slipping) v.slipT = -1; }
     if (p.caught) {
       spotlight({ x: v.x, lane } as P, C.ALERT);
       drawPlayer(ctx, v.look, Math.floor(t * 8) % 2 ? 'cheer' : 'caught', v.x, lane);
       liveTag(p.name, v.x, lane, C.PAPER, C.ALERT, ['CAUGHT', C.INK]);
+      if (stareN < STARE_MAX) {
+        const e = stare[stareN++];
+        e.name = p.name; e.x = v.x; e.lane = lane; e.micro = p.micro; e.score = p.microScore; e.left = p.microLeft;
+      }
+      continue;
+    }
+    const tagColor = p.npc ? C.STONE_HI : p.moving ? C.SAFE : C.PAPER;
+    if (p.nerd || slipping) {
+      drawPlayer(ctx, v.look, 'caught', v.x, lane);
+      if (p.nerd && Math.floor(t * 8) % 2) {
+        const bx = Math.round(v.x);
+        rect(ctx, bx - 11, lane - 20, 22, 1, C.ALERT); rect(ctx, bx - 11, lane + 2, 22, 1, C.ALERT);
+        rect(ctx, bx - 11, lane - 20, 1, 23, C.ALERT); rect(ctx, bx + 10, lane - 20, 1, 23, C.ALERT);
+      }
+      liveTag(p.name, v.x, lane, p.nerd ? C.ALERT : tagColor, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
       continue;
     }
     let fr: PlayerFrame = 'freeze';
-    if (phase === 'push') fr = Math.floor(t * 10 + players.indexOf(p)) % 2 ? 'cheer' : 'stand';
-    else if (p.moving) fr = moon ? (Math.floor(t * 6) % 2 ? 'stepA' : 'stepB') : (Math.floor(t * 8 + players.indexOf(p)) % 2 ? 'sneakA' : 'sneakB');
+    if (phase === 'push') fr = Math.floor(t * 10 + i) % 2 ? 'cheer' : 'stand';
+    else if (p.moving) fr = moon ? (Math.floor(t * 6) % 2 ? 'stepA' : 'stepB') : (Math.floor(t * 8 + i) % 2 ? 'sneakA' : 'sneakB');
     drawPlayer(ctx, v.look, fr, v.x + (phase === 'push' ? (Math.floor(t * 12) % 2) : 0), lane, moon && p.moving);
-    liveTag(p.name, v.x, lane, p.moving ? C.SAFE : C.PAPER);
+    liveTag(p.name, v.x, lane, tagColor, C.INK, p.npc ? ['NPC', C.STONE] : undefined);
   }
 
   drawGus(ctx, gus, t);
+  drawGlasses(rule, gus);
   drawRope(ctx, t, entering || !!s?.ropeSnapped && phase !== 'lobby');
 
+  // Lights Out: dark street, Gus's beam shows the way (and turns red when he is watching)
+  if (rule === 'lights') {
+    drawDarkness(ctx, t, toPx(s!.beam ?? 0.5), T.BEAM_HALF * (L.ROPE_X - 10 - L.START_X), s!.gus === 'watch');
+    drawGus(ctx, gus, t);
+    drawGlasses(rule, gus);
+  }
+
   // ---------- overlays ----------
+  for (let k = 0; k < stareN; k++) layoutStare(k);
+  for (let k = 0; k < stareN; k++) drawStare(k);
+  for (let k = 0; k < bananaN; k++) blit(ctx, BANANA, flyers[k].x, flyers[k].y, Math.floor(t * 8) % 2 === 0);
   if (phase === 'lobby') liveLobbyPanel(players);
   else if (phase !== 'reveal') {
     liveVipPanel(lounge, s!);
@@ -658,34 +766,119 @@ function drawLiveScreen(dt: number) {
   if (phase === 'play' && moon && (!bannerMsg || t > bannerMsg.until) && Math.floor(t * 2) % 2) drawTextOutlined(ctx, '<< RELEASE TO MOVE >>', 112, 70, C.NEON, C.INK);
   if (phase === 'push') livePushMeter(s!);
   if (phase === 'vote') liveVotePanel(s!);
+  if (gusText && t < gusText.until && phase !== 'reveal') {
+    const x = Math.max(2, Math.min(L.W - 2 - textWidth(gusText.text), Math.round(L.GUS_X - textWidth(gusText.text) / 2)));
+    drawTextOutlined(ctx, gusText.text, x, L.GUS_FEET - 51, gusText.color, C.INK);
+  }
   if (bannerMsg && t < bannerMsg.until && phase !== 'reveal') banner(bannerMsg.text, bannerMsg.sub, bannerMsg.fill, C.INK, phase === 'push' ? 44 : 30);
   if (phase === 'reveal') liveReveal(s!);
-  if (!netUp) { rect(ctx, L.W - 70, L.TEXT_Y - 12, 68, 10, C.ALERT); drawText(ctx, 'NO SERVER', L.W - 66, L.TEXT_Y - 11, C.PAPER); }
+  let tagY = L.TEXT_Y - 9;
+  if (s?.ai === 'scripted') { const w = textWidth('SCRIPTED') + 4; rect(ctx, L.W - 2 - w, tagY, w, 9, C.INK); drawText(ctx, 'SCRIPTED', L.W - w, tagY + 1, C.STONE); tagY -= 10; }
+  if (!netUp) { rect(ctx, L.W - 70, tagY, 68, 10, C.ALERT); drawText(ctx, 'NO SERVER', L.W - 66, tagY + 1, C.PAPER); }
+  if (muted) { const w = textWidth('MUTED') + 4; rect(ctx, 2, L.TEXT_Y - 9, w, 9, C.INK); drawText(ctx, 'MUTED', 4, L.TEXT_Y - 8, C.STONE_HI); }
 
   ctx.restore();
 
-  const prev = Math.floor(shown);
-  shown = Math.min(line.length, shown + dt * 30);
-  if (Math.floor(shown) !== prev && Math.floor(shown) % 2 === 0 && line[Math.floor(shown)] !== ' ') sfx.blip(true);
-  textBox(ctx, 2, L.TEXT_Y + 1, L.W - 4, 33, line, shown, t, 'GUS');
+  // Gus's text box (long lines page through two rows at a time) + the Bouncer Brain HUD
+  const hudOn = (phase === 'play' || phase === 'push') && !!s;
+  const boxW = hudOn ? L.W - 4 - 66 : L.W - 4;
+  const cols = Math.floor((boxW - 14) / 6);
+  const rows = wrap(line, cols);
+  const pages = Math.max(1, Math.ceil(rows.length / 2));
+  if (page >= pages) page = pages - 1;
+  const text = rows.slice(page * 2, page * 2 + 2).join(' ');
+  const prev = Math.floor(pageShown);
+  pageShown = Math.min(text.length, pageShown + dt * 30);
+  if (Math.floor(pageShown) !== prev && Math.floor(pageShown) % 2 === 0 && text[Math.floor(pageShown)] !== ' ') sfx.blip(true);
+  if (pageShown >= text.length && page < pages - 1) {
+    pageWait += dt;
+    if (pageWait > 1.6) { page++; pageShown = 0; pageWait = 0; }
+  }
+  textBox(ctx, 2, L.TEXT_Y + 1, boxW, 33, text, pageShown, t, lineWho, page < pages - 1);
+  if (hudOn) liveHud(s!.hud);
   if (flash > 0) { dither(ctx, 0, 0, L.W, L.H, flashColor, Math.floor(t * 30)); flash -= dt; }
+}
+
+function drawGlasses(rule: string | null, pose: GusPose) {
+  if (rule !== 'glasses') return;
+  const x = L.GUS_X - 12, y = L.GUS_FEET - 28;
+  if (pose === 'watch' || pose === 'point') {
+    rect(ctx, x + 6, y + 3, 12, 1, C.NEON); rect(ctx, x + 6, y + 5, 12, 1, C.NEON);
+    rect(ctx, x + 5, y + 4, 1, 1, C.NEON); rect(ctx, x + 18, y + 4, 1, 1, C.NEON);
+  } else if (pose === 'tell') {
+    rect(ctx, x + 6, y + 5, 4, 1, C.NEON); rect(ctx, x + 5, y + 5, 1, 1, C.NEON);
+  }
+}
+
+function liveHud(h: Snapshot['hud']) {
+  const x = 256, y = L.TEXT_Y + 1, w = 62, hh = 33;
+  rect(ctx, x + 2, y + hh, w - 2, 2, C.NIGHT); rect(ctx, x + w, y + 2, 2, hh, C.NIGHT);
+  rect(ctx, x, y, w, hh, C.PAPER);
+  rect(ctx, x + 1, y + 1, w - 2, hh - 2, C.NIGHT);
+  const cells: [string, number, string][] = [['EGO', h.ego, C.LAMP], ['PAR', h.paranoia, C.ALERT], ['BOR', h.boredom, C.STONE_HI], ['SUS', h.suspicion, C.NEON]];
+  for (let k = 0; k < 4; k++) {
+    const cx = x + 4 + (k % 2) * 29, cy = y + 3 + Math.floor(k / 2) * 15;
+    drawText(ctx, cells[k][0], cx, cy, C.STONE_HI);
+    meter(ctx, cx, cy + 8, 26, 5, cells[k][1], cells[k][2]);
+  }
+}
+
+/** Up to 3 stare-down insets, spread so they never overlap and always stay on screen. */
+function layoutStare(k: number) {
+  const e = stare[k];
+  let x = Math.round(e.x - STARE_W / 2);
+  if (k > 0) {
+    // insets are drawn left-to-right in arrival order; push right of the previous one
+    x = Math.max(x, stare[k - 1].bx + STARE_W + 3);
+  }
+  e.bx = x;
+  if (k === stareN - 1) {
+    // fit into the screen: clamp the last one and pull the others left as needed
+    let right = L.W - 6;
+    for (let j = stareN - 1; j >= 0; j--) {
+      const s2 = stare[j];
+      s2.bx = Math.min(s2.bx, right - STARE_W);
+      right = s2.bx - 3;
+    }
+    if (stare[0].bx < 4) { let nx = 4; for (let j = 0; j < stareN; j++) { stare[j].bx = Math.max(stare[j].bx, nx); nx = stare[j].bx + STARE_W + 3; } }
+  }
+}
+
+function drawStare(k: number) {
+  const e = stare[k];
+  const x = e.bx, y = 44, w = STARE_W;
+  const value = e.score, safe = value >= 1;
+  frame(ctx, x, y, w, STARE_H);
+  nameTab(ctx, 'STARE-DOWN', x + 6, y, C.ALERT, C.PAPER);
+  ctx.drawImage(gusSprite('watch', C.ALERT), 0, 0, 24, 9, x + 4, y + 7, 48, 18);
+  drawText(ctx, `${e.name.slice(0, 7)}:`, x + 52, y + 9, C.INK);
+  drawText(ctx, e.micro === 'shake' ? 'DANCE!' : 'BRIBE!', x + 52, y + 19, C.ALERT);
+  meter(ctx, x + 7, y + 30, 66, 9, value, safe ? C.SAFE : value > 0.6 ? C.SAFE : C.LAMP, 8);
+  drawText(ctx, `${Math.max(0, Math.ceil(e.left))}`, x + 80, y + 31, C.INK, 1);
+  if (safe) drawText(ctx, 'SAFE', x + 7, y + 41, C.SAFE);
+  else drawText(ctx, 'NERVE', x + 7, y + 41, C.STONE);
+  // dotted pointer down to the player
+  const px = Math.max(x + 6, Math.min(x + w - 6, Math.round(e.x)));
+  for (let yy = y + STARE_H + 3; yy < e.lane - 22; yy += 3) rect(ctx, px, yy, 1, 1, C.ALERT);
 }
 
 function liveLobbyPanel(players: PubPlayer[]) {
   const m = 2;
   const size = (qr.size + 4) * m;
-  const x = 156, y = 40;
-  frame(ctx, x - 8, y - 2, size + 16, size + 30);
-  drawQR(x + 2 * m, y + 4 + 2 * m, m);
-  drawTextCentered(ctx, 'SCAN TO GET', x + size / 2, y + size + 5, C.INK);
-  drawTextCentered(ctx, 'IN LINE', x + size / 2, y + size + 14, C.INK);
+  const w = 124, x0 = 114, y0 = 26;
+  const h = 4 + size + 3 + 9 + 3 + 16 + 7;
+  frame(ctx, x0, y0, w, h);
+  drawQR(x0 + Math.round((w - size) / 2) + 2 * m, y0 + 4 + 2 * m, m);
+  drawTextCentered(ctx, 'SCAN TO GET IN LINE', x0 + w / 2, y0 + 4 + size + 3, C.INK);
+  if (roomCode) drawTextCentered(ctx, `ROOM ${roomCode}`, x0 + w / 2, y0 + 4 + size + 15, C.VELVET, 2);
+  else drawTextCentered(ctx, 'CONNECTING...', x0 + w / 2, y0 + 4 + size + 18, C.STONE);
   const n = players.length;
   const shownNames = players.slice(0, 5);
-  const h = 26 + (shownNames.length ? shownNames.length * 9 + 2 : 0) + (n > 5 ? 9 : 0);
-  frame(ctx, 4, 4, 92, h, C.NIGHT, C.SAFE);
+  const ph = 26 + (shownNames.length ? shownNames.length * 9 + 2 : 0) + (n > 5 ? 9 : 0);
+  frame(ctx, 4, 4, 92, ph, C.NIGHT, C.SAFE);
   drawText(ctx, 'IN LINE', 11, 10, C.SAFE);
   drawText(ctx, `${String(n).padStart(3, '0')} ${n === 1 ? 'PERSON' : 'PEOPLE'}`, 11, 19, C.PAPER);
-  shownNames.forEach((p, i) => { drawText(ctx, `${i + 1}`, 11, 30 + i * 9, C.STONE_HI); drawText(ctx, p.name, 21, 30 + i * 9, C.PAPER); });
+  shownNames.forEach((p, i) => { drawText(ctx, `${i + 1}`, 11, 30 + i * 9, C.STONE_HI); drawText(ctx, p.name, 21, 30 + i * 9, p.npc ? C.STONE_HI : C.PAPER); });
   if (n > 5) drawText(ctx, `+${n - 5} MORE`, 21, 30 + 5 * 9, C.STONE_HI);
   if (n > 0 && Math.floor(t * 2) % 2) drawTextOutlined(ctx, 'HOST: PRESS S TO START', 100, 6, C.LAMP, C.INK);
 }
@@ -705,16 +898,16 @@ function liveVipPanel(lounge: PubPlayer[], s: Snapshot) {
   if (s.rule) {
     const ry = 19 + rows * 9 + 2;
     drawText(ctx, 'RULE:', 10, ry, C.STONE_HI);
-    drawText(ctx, 'MOONWALK', 10, ry + 9, C.NEON);
+    drawText(ctx, RULES[s.rule].name, 10, ry + 9, C.NEON);
   }
 }
 
 function liveClock(s: Snapshot) {
   const label = s.phase === 'play' ? 'LAST CALL' : s.phase === 'push' ? 'ROPE' : 'VOTE';
-  const left = s.phase === 'play' ? s.timeLeft - 15 : s.phase === 'push' ? s.timeLeft - 5 : s.timeLeft;
-  frame(ctx, L.W - 70, 2, 66, 21, C.NIGHT, left <= 5 ? C.ALERT : C.PAPER);
-  drawText(ctx, label, L.W - 64, 6, C.STONE_HI);
-  drawText(ctx, `${Math.max(0, Math.ceil(left))}S`, L.W - 64, 14, left <= 5 ? C.ALERT : C.PAPER);
+  const left = s.phase === 'play' ? s.timeLeft - (T.PUSH + T.VOTE) : s.phase === 'push' ? s.timeLeft - T.VOTE : s.timeLeft;
+  frame(ctx, L.W - 70, 2, 66, 25, C.NIGHT, left <= 5 ? C.ALERT : C.PAPER);
+  drawText(ctx, label, L.W - 64, 7, C.STONE_HI);
+  drawText(ctx, `${Math.max(0, Math.ceil(left))}S`, L.W - 64, 15, left <= 5 ? C.ALERT : C.PAPER);
 }
 
 function livePushMeter(s: Snapshot) {
@@ -754,8 +947,8 @@ function liveVotePanel(s: Snapshot) {
 function liveReveal(s: Snapshot) {
   const r = s.reveal;
   dither(ctx, 0, 0, L.W, L.TEXT_Y, C.INK);
-  const w = 288, x = (L.W - w) / 2, y = 4;
-  frame(ctx, x, y, w, 136);
+  const w = 288, x = (L.W - w) / 2, y = 2;
+  frame(ctx, x, y, w, 140);
   drawTextCentered(ctx, "TONIGHT'S VIP", L.W / 2, y + 7, C.VELVET, 2);
   if (r?.winnerId && r.winnerName) {
     const v = lp.get(r.winnerId);
@@ -766,10 +959,10 @@ function liveReveal(s: Snapshot) {
   } else {
     drawTextCentered(ctx, 'NOBODY. GUS WINS.', L.W / 2, y + 28, C.INK, 2);
   }
-  rect(ctx, x + 8, y + 58, w - 16, 1, C.INK);
-  drawText(ctx, 'RANKING: CROWN FIRST', x + 10, y + 63, C.STONE);
+  rect(ctx, x + 8, y + 57, w - 16, 1, C.INK);
+  drawText(ctx, 'RANKING: CROWN FIRST', x + 10, y + 61, C.STONE);
   (r?.ranking ?? []).slice(0, 7).forEach((row, i) => {
-    const yy = y + 74 + i * 9;
+    const yy = y + 71 + i * 8;
     const c = i === 0 ? C.VELVET : C.INK;
     drawText(ctx, `#${i + 1}`, x + 10, yy, c);
     drawText(ctx, row.name, x + 28, yy, c);
@@ -777,13 +970,14 @@ function liveReveal(s: Snapshot) {
     const sc = `${row.score}`;
     drawText(ctx, sc, x + 136 - textWidth(sc), yy, c);
   });
-  drawText(ctx, 'AWARDS', x + 148, y + 63, C.STONE);
+  drawText(ctx, 'AWARDS', x + 148, y + 61, C.STONE);
   (r?.awards ?? []).forEach((a, i) => {
-    const yy = y + 74 + i * 17;
+    const yy = y + 71 + i * 17;
     drawText(ctx, a.label, x + 148, yy, C.STONE);
     drawText(ctx, a.value ? `${a.name} ${a.value}` : a.name, x + 148, yy + 9, C.INK);
   });
-  if (Math.floor(t * 2) % 2) drawTextCentered(ctx, 'HOST: R FOR A NEW NIGHT', L.W / 2, y + 127, C.STONE);
+  if (Math.floor(t) % 2) drawTextCentered(ctx, 'MUGSHOTS SENT TO YOUR PHONES', L.W / 2, y + 128, C.VELVET);
+  else drawTextCentered(ctx, 'HOST: R FOR A NEW NIGHT', L.W / 2, y + 128, C.STONE);
 }
 
 const CROWN_ICON = ['k..kk..k', 'kk.kk.kk', 'kykyykyk', 'kyyyyyyk', 'kyyyyyyk', 'kkkkkkkk', '........', '........'];
@@ -792,6 +986,7 @@ addEventListener('keydown', (e) => {
   if (!LIVE || !net) return;
   const k = e.key.toLowerCase();
   if (k === 's' && (!snap || snap.phase === 'lobby' || snap.phase === 'reveal')) net.send({ t: 'start' });
+  if (k === 'm') setMute(!muted);
   if (k === 'r') { net.send({ t: 'reset' }); lp.clear(); }
 });
 
@@ -807,6 +1002,5 @@ function loop(now: number) {
 addEventListener('pointerdown', unlock);
 addEventListener('keydown', unlock);
 addEventListener('resize', () => scr.fitFixed(host));
-if (LIVE) say('CLUB VELVET IS OPEN. SCAN THE CODE AND GET IN LINE. NO PUSHING.');
-else enter(params.get('state') as S || 'auto');
+if (!LIVE) enter(params.get('state') as S || 'auto');
 requestAnimationFrame(loop);

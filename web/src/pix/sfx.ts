@@ -47,5 +47,6 @@ export const sfx = {
   vip: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.08, i * 0.08)),
   tap: () => tone(330 + Math.random() * 80, 0.02, 0, 'square', 0.03),
   coin: () => { tone(988, 0.04); tone(1568, 0.08, 0.04); },
+  beat: (i: number) => { const bass = [110, 110, 147, 110, 131, 110, 165, 147][i % 8]; tone(bass, 0.1, 0, 'square', 0.05); if (i % 2) tone(1760, 0.015, 0, 'square', 0.02); },
   nerd: () => [0, 0.12, 0.24].forEach((w) => tone(220, 0.08, w, 'sawtooth', 0.05)),
 };
