@@ -1,0 +1,16 @@
+# Render Blueprint. All room state lives in memory, so this must stay at exactly one instance.
+services:
+  - type: web
+    name: jailbreak-the-bouncer
+    runtime: docker
+    plan: free
+    branch: deploy-site
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    # Deploy only from deploy-site (merge main -> deploy-site to release), and only after CI passes.
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
