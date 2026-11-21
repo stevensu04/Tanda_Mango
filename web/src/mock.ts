@@ -7,7 +7,7 @@ export const NAMES = [
 ];
 
 /** Funny defaults for the phone's "reroll name" (no typing anywhere). */
-export const DEFAULT_NAMES = ['SNEAKY PETE', 'NOT A COP', 'DJ OYSTER', 'TOTALLY 21', 'VIP-ISH', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN', 'BOUNCY', 'GUEST OF GUEST'];
+export const DEFAULT_NAMES = ['SNEAKY PETE', 'NOT A COP', 'DJ OYSTER', 'TOTALLY 21', 'VIP-ISH', 'TALL KEV', 'MRS. STEALTH', 'THE INTERN', 'BOUNCY', 'PLUS ONE'];
 
 export const LINES = {
   lobby: 'CLUB VELVET IS OPEN. SCAN THE CODE AND GET IN LINE. NO PUSHING.',

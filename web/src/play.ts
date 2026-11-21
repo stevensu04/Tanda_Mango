@@ -5,6 +5,12 @@ import { lookFromSeed, playerSprite, gusSprite, icon, type PlayerLook, type Play
 import { sfx, unlock } from './pix/sfx';
 import { devbar } from './devbar';
 import { CHAOS, POWERS, MUGSHOT, SOLO, DEFAULT_NAMES, LINES } from './mock';
+import { connect, phoneToken } from './net';
+import { T, type Me, type PhoneRole, type ServerMsg, type GusPhase } from '../../shared/protocol';
+
+// Linked to the room server by default. ?preview (or ?state=) keeps the offline design preview.
+const params = new URLSearchParams(location.search);
+const LIVE = !params.has('preview') && !params.has('state');
 
 type S = 'join' | 'sneak' | 'looking' | 'shake' | 'mash' | 'still' | 'pass' | 'flung' | 'nerd' | 'owner' | 'lounge' | 'mosh' | 'dodge' | 'flip' | 'captcha' | 'mugshot' | 'solo' | 'alley' | 'vip';
 
@@ -37,8 +43,8 @@ const ctx = scr.ctx;
 // ---------- player ----------
 let seed = Math.floor(Math.random() * 1e6);
 let look: PlayerLook = lookFromSeed(seed);
-let nameIdx = 0;
-let myName = DEFAULT_NAMES[0];
+let nameIdx = Math.floor(Math.random() * DEFAULT_NAMES.length);
+let myName = DEFAULT_NAMES[nameIdx];
 let motionAsked = false;
 let motionOK = false;
 
@@ -60,10 +66,10 @@ let dodge = { x: 80, y: 0, moves: 0 };
 let cooldowns = POWERS.map(() => 0);
 let resultLine = '';
 
-const bar = devbar(STATES, (id) => go(id as S), { collapsed: true });
+const bar = LIVE ? null : devbar(STATES, (id) => go(id as S), { collapsed: true });
 
 function go(s: S) {
-  state = s; st = 0; bar.mark(s);
+  state = s; st = 0; bar?.mark(s);
   micro = { score: 0, taps: 0, energy: 0, still: 1 };
   coins = [];
   holding = false;
@@ -180,11 +186,14 @@ function drawJoin() {
   button('name', 'NEW', W - 44, ay + 94, 34, 18, C.LAMP);
   // motion permission
   const my = ay + 122;
-  const label = motionOK ? 'SHAKING: ON' : motionAsked ? 'NO SENSOR: MASH' : 'TAP TO ENABLE SHAKING';
-  button('motion', label, 8, my, W - 16, 20, motionOK ? C.SAFE : C.PAPER);
+  if (!LIVE) {
+    const label = motionOK ? 'SHAKING: ON' : motionAsked ? 'NO SENSOR: MASH' : 'TAP TO ENABLE SHAKING';
+    button('motion', label, 8, my, W - 16, 20, motionOK ? C.SAFE : C.PAPER);
+  }
   // join
   const by = Math.max(my + 30, scr.h - 70);
-  bigButtonRect('joinBtn', 'GET IN LINE', by);
+  bigButtonRect('joinBtn', LIVE && joinSentAt >= 0 && t - joinSentAt < 2 ? 'JOINING...' : 'GET IN LINE', by);
+  if (LIVE && !netUp) drawTextCentered(ctx, 'LOOKING FOR THE CLUB...', W / 2, by - 12, C.STONE_HI);
 }
 
 function bigButtonRect(id: string, label: string, y: number) {
@@ -321,7 +330,7 @@ function drawResult(pass: boolean) {
   }
   textBox(ctx, 4, y + 96, W - 8, 52, resultLine, st * 30, t, 'GUS');
   drawTextCentered(ctx, pass ? 'YOU KEEP YOUR SPOT' : 'BACK OF THE LINE', W / 2, y + 160, pass ? C.SAFE : C.LAMP);
-  if (st > 2.6 && curtain < 0) go('sneak');
+  if (!LIVE && st > 2.6 && curtain < 0) go('sneak');
 }
 
 function drawNerd() {
@@ -555,10 +564,11 @@ async function askMotion() {
 host.addEventListener('pointerdown', (e) => {
   unlock();
   e.preventDefault();
-  host.setPointerCapture(e.pointerId);
+  try { host.setPointerCapture(e.pointerId); } catch { /* synthetic or already-lifted pointer */ }
   let { x, y } = scr.toLogical(e.clientX, e.clientY);
   if (state === 'flip') { x = W - x; y = scr.h - y; }
   const id = pick(x, y);
+  if (LIVE && liveDown(id, x, y)) return;
   if (state === 'dodge' && id === 'big' && dodge.moves < 3) {
     dodge.moves++; dodge.x = dodge.x < 80 ? 112 : 48; sfx.blip(); return;
   }
@@ -583,12 +593,355 @@ host.addEventListener('pointerdown', (e) => {
   }
 });
 const release = () => {
+  if (LIVE) { liveUp(); return; }
   if (holding && state === 'join') { holding = false; wipeTo('sneak'); return; }
   holding = false;
 };
 host.addEventListener('pointerup', release);
 host.addEventListener('pointercancel', release);
 host.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// =====================================================================
+// LIVE: every screen below renders what the room server says (Me).
+// Nothing here is simulated locally except sparkle (coins, sfx, curtain).
+// =====================================================================
+let me: Me | null = null;
+let netUp = false;
+let everUp = false;
+let role: PhoneRole = 'join';
+let roleSince = 0;
+let lastGus: GusPhase = 'back';
+let pressSent = false;
+let joinArmed = false;
+let joinSentAt = -1;
+let ruleSent = false;
+
+const net = LIVE ? connect(() => ({ t: 'hello', role: 'phone', token: phoneToken() }), onServer, (up) => { netUp = up; everUp ||= up; }) : null;
+
+function curtainFx() { if (curtain < 0) { curtain = 0; curtainNext = state; } }
+
+function onServer(m: ServerMsg) {
+  if (m.t !== 'me') return;
+  me = m;
+  if (m.id) {
+    myName = m.name;
+    if (m.seed !== seed) { seed = m.seed; look = lookFromSeed(seed); }
+  }
+  if (m.role !== role) {
+    const from = role;
+    role = m.role; roleSince = t; st = 0;
+    holding = false; micro.taps = 0; coins = [];
+    onRoleChange(from, m);
+  }
+  if (m.role === 'sneak' && m.gus !== lastGus) {
+    if (m.gus === 'tell') { sfx.tell(); buzz(60); }
+    if (m.gus === 'watch') { sfx.turn(); buzz([90, 40, 90]); }
+  }
+  lastGus = m.gus;
+}
+
+function onRoleChange(from: PhoneRole, m: Me) {
+  if (m.role === 'caught') { sfx.caught(); buzz([200, 60, 200]); curtainFx(); }
+  if (m.role === 'result') { if (m.result?.pass) sfx.pass(); else sfx.fling(); }
+  if (m.role === 'owner-pick') { ruleSent = false; sfx.vip(); buzz([60, 40, 120]); curtainFx(); }
+  if (m.role === 'lounge' && from === 'sneak') sfx.vip();
+  if (m.role === 'break' || m.role === 'defend') buzz([120, 60, 120]);
+  if (m.role === 'support' || m.role === 'defending') { sfx.tell(); buzz(80); }
+  if (m.role === 'reveal') { if (m.reveal?.winnerId === m.id) { sfx.vip(); buzz([80, 40, 80, 40, 200]); } else sfx.blip(true); curtainFx(); }
+}
+
+function liveDown(id: string | null, x: number, y: number): boolean {
+  if (!net) return false;
+  switch (id) {
+    case 'joinBtn': holding = true; joinArmed = true; return true;
+    case 'big':
+      holding = true; sfx.blip();
+      if (role === 'sneak') { net.send({ t: 'press' }); pressSent = true; }
+      if (role === 'support' && !me?.voted && t - roleSince >= 0.5) { net.send({ t: 'tap' }); buzz(40); }
+      return true;
+    case 'mash':
+      holding = true; micro.taps++;
+      net.send({ t: 'tap' });
+      coins.push({ x: x - 3, y: y - 3, vy: -120 - Math.random() * 60, life: 0.8 });
+      if (role === 'caught') sfx.coin(); else sfx.tap();
+      buzz(10);
+      return true;
+    case 'rule0':
+      if (!ruleSent) { net.send({ t: 'rule', rule: 'moonwalk' }); ruleSent = true; sfx.vip(); buzz(30); }
+      return true;
+  }
+  return false;
+}
+
+function liveUp() {
+  if (joinArmed) {
+    joinArmed = false;
+    if (net?.up) { net.send({ t: 'join', name: myName, seed }); joinSentAt = t; sfx.vip(); }
+  }
+  if (pressSent) { net?.send({ t: 'release' }); pressSent = false; }
+  holding = false;
+}
+
+const secs = (s: number) => `${Math.max(0, Math.ceil(s))}`;
+
+function drawLive(dt: number) {
+  if (!me || !me.id || role === 'join') drawJoin();
+  else switch (role) {
+    case 'lobby': drawLiveLobby(); break;
+    case 'sneak': drawLiveSneak(); break;
+    case 'caught': drawLiveCaught(dt); break;
+    case 'result': resultLine = me.result?.line ?? ''; drawResult(!!me.result?.pass); break;
+    case 'owner-pick': drawLiveOwnerPick(); break;
+    case 'lounge': drawLiveLounge(); break;
+    case 'break': drawLivePush(false, dt); break;
+    case 'defend': drawLivePush(true, dt); break;
+    case 'support': drawLiveSupport(); break;
+    case 'defending': drawLiveDefending(); break;
+    case 'outside-vote': drawLiveOutsideVote(); break;
+    case 'reveal': drawLiveReveal(); break;
+  }
+  if (!netUp && everUp) {
+    rect(ctx, 0, 0, W, 12, C.ALERT);
+    drawTextCentered(ctx, 'RECONNECTING...', W / 2, 3, C.PAPER);
+  }
+}
+
+function avatarCard(y: number, frameMe: PlayerFrame) {
+  frame(ctx, 30, y, 100, 76, C.ASPHALT, C.PAPER);
+  dither(ctx, 36, y + 54, 88, 8, C.ASPHALT_HI);
+  blit(ctx, playerSprite(look, frameMe), 48, y + 4, false, 4);
+  frame(ctx, 8, y + 82, W - 16, 20);
+  drawTextCentered(ctx, myName, W / 2, y + 89, C.INK);
+}
+
+function drawLiveLobby() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  drawTextCentered(ctx, "YOU'RE", W / 2, 14, C.LAMP, 2);
+  drawTextCentered(ctx, 'IN LINE', W / 2, 32, C.LAMP, 2);
+  avatarCard(58, Math.floor(t * 2) % 6 === 0 ? 'cheer' : 'stand');
+  const y = 172;
+  drawTextCentered(ctx, `${m.total} ${m.total === 1 ? 'PERSON' : 'PEOPLE'} IN LINE`, W / 2, y, C.SAFE);
+  drawTextCentered(ctx, 'FIND YOUR NAME ON', W / 2, y + 18, C.STONE_HI);
+  drawTextCentered(ctx, 'THE BIG SCREEN', W / 2, y + 28, C.STONE_HI);
+  if (Math.floor(t * 2) % 2) drawTextCentered(ctx, 'WAITING FOR THE HOST', W / 2, Math.max(y + 48, scr.h - 16), C.PAPER);
+}
+
+function drawLiveSneak() {
+  const m = me!;
+  const moon = m.rule === 'moonwalk';
+  const watching = m.gus === 'watch', telling = m.gus === 'tell', napping = m.gus === 'sleep';
+  const bg = watching ? (Math.floor(t * 6) % 2 ? C.ALERT : C.VELVET) : telling ? C.LAMP_LO : C.NIGHT;
+  rect(ctx, 0, 0, W, scr.h, bg);
+  progress = m.x;
+  const fr: PlayerFrame = watching && m.moving ? 'caught' : m.moving ? (Math.floor(t * 8) % 2 ? 'sneakA' : 'sneakB') : 'freeze';
+  const wy = streetWindow(Math.round(scr.h * 0.36), m.gus, fr, m.x);
+  const status = watching ? (moon ? "HE'S LOOKING. HOLD ON!" : "HE'S LOOKING. FREEZE!")
+    : telling ? 'HE MIGHT TURN...'
+    : m.needFreshPress && moon ? 'TOUCH TO START AGAIN'
+    : napping ? 'GUS IS NAPPING. GO!'
+    : moon ? 'MOONWALK: LET GO TO MOVE'
+    : 'GUS IS ON HIS PHONE';
+  statusLine(wy + 4, status, watching ? C.ALERT : telling ? C.LAMP : moon ? C.NEON : C.SAFE);
+  progressBar(wy + 20);
+  const top = wy + 34;
+  if (moon) {
+    rect(ctx, 0, top, W, 11, C.NEON);
+    drawTextCentered(ctx, `${m.ruleBy ?? 'THE DOOR'} PICKED MOONWALK`, W / 2, top + 2, C.INK);
+  }
+  const cy = Math.round(top + 6 + (scr.h - top - 22) / 2);
+  const color = watching ? C.PAPER : telling ? C.LAMP : moon ? C.NEON : C.SAFE;
+  if (moon) {
+    // Moonwalk under a held thumb: the first thing to read is LET GO. Once moving, the job is HOLD TO FREEZE.
+    const danger = watching || telling;
+    if (m.needFreshPress) bigButton(W / 2, cy, 46, 'TAP', 'THEN LET GO', color);
+    else if (holding && !danger) bigButton(W / 2, cy, 46, 'LET GO', 'TO MOVE', C.SAFE);
+    else bigButton(W / 2, cy, 46, 'HOLD', danger ? "DON'T LET GO" : 'TO FREEZE', color);
+  }
+  else bigButton(W / 2, cy, 46, watching ? 'FREEZE' : 'HOLD', watching ? "DON'T MOVE" : 'TO SNEAK', color);
+  drawTextCentered(ctx, `LAST CALL IN ${secs(m.timeLeft - T.PUSH - T.VOTE)}S`, W / 2, scr.h - 12, watching ? C.PAPER : C.STONE_HI);
+}
+
+function drawLiveCaught(dt: number) {
+  const m = me!;
+  stareHeader('BRIBE ME. FASTER.');
+  const y = 110;
+  drawTextCentered(ctx, 'MASH!', W / 2, y, C.LAMP, 3);
+  const cy = y + 60;
+  disc(ctx, W / 2, cy + 3, 40, C.INK);
+  disc(ctx, W / 2, cy + (holding ? 3 : 0), 40, C.INK);
+  disc(ctx, W / 2, cy + (holding ? 3 : 0), 37, C.LAMP);
+  blit(ctx, icon.coin(), W / 2 - 9, cy - 9 + (holding ? 3 : 0), false, 3);
+  hit('mash', 0, 104, W, scr.h - 104);
+  for (const c of coins) { c.y += c.vy * dt; c.vy += 260 * dt; c.life -= dt; blit(ctx, icon.coin(), c.x, c.y); }
+  coins = coins.filter((c) => c.life > 0);
+  const v = Math.min(1, m.microTaps / T.MICRO_PASS_TAPS);
+  meter(ctx, 12, cy + 50, W - 24, 12, v, v >= 1 ? C.SAFE : C.LAMP, 10);
+  drawText(ctx, `${m.microTaps}/${T.MICRO_PASS_TAPS} TAPS`, 12, cy + 65, v >= 1 ? C.SAFE : C.LAMP);
+  const left = m.microLeft;
+  drawTextCentered(ctx, secs(left), W / 2, Math.min(scr.h - 30, cy + 80), left < 2 ? C.ALERT : C.PAPER, 3);
+}
+
+function drawLiveOwnerPick() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, 50, C.LAMP_LO);
+  drawTextCentered(ctx, 'YOU RUN', W / 2, 8, C.LAMP, 2);
+  drawTextCentered(ctx, 'THE DOOR', W / 2, 26, C.LAMP, 2);
+  const left = m.ownerPickLeft;
+  const fw = Math.round((W - 24) * Math.min(1, left / T.OWNER_PICK));
+  rect(ctx, 12, 54, W - 24, 3, C.ASPHALT);
+  rect(ctx, 12, 54, fw, 3, C.PAPER);
+  if (left > 0) rect(ctx, 12 + fw - 1, 52 + (Math.floor(t * 12) % 2), 3, 3, C.LAMP);
+  drawText(ctx, `${secs(left)}S`, W - 26, 60, C.STONE_HI);
+  drawText(ctx, 'PICK A RULE:', 12, 64, C.PAPER);
+  const y = 78, h = 96;
+  frame(ctx, 8, y, W - 16, h, ruleSent ? C.LAMP : C.PAPER);
+  if (ruleSent || Math.floor(t * 2) % 2) drawText(ctx, '>', 14, y + 10, C.INK);
+  drawText(ctx, 'MOONWALK', 24, y + 8, C.INK, 2);
+  drawText(ctx, 'EVERYONE OUTSIDE:', 16, y + 32, C.VELVET);
+  drawText(ctx, 'LET GO TO MOVE.', 16, y + 44, C.INK);
+  drawText(ctx, 'HOLD TO FREEZE.', 16, y + 54, C.INK);
+  drawText(ctx, ruleSent ? 'SENDING...' : 'TAP TO PICK', 16, y + 74, ruleSent ? C.VELVET : C.STONE);
+  hit('rule0', 8, y, W - 16, h);
+  drawTextCentered(ctx, 'NO PICK = MOONWALK', W / 2, y + h + 12, C.STONE_HI);
+}
+
+const CROWN = (scale: number, x: number, y: number) => blit(ctx, sprite('pw3', POWER_ICONS[3], { k: C.INK, y: C.LAMP, w: C.PAPER }), x, y, false, scale);
+
+function drawLiveLounge() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, 44, Math.floor(t * 4) % 2 ? C.NEON : C.VELVET, Math.floor(t * 4));
+  drawTextCentered(ctx, 'VIP LOUNGE', W / 2, 10, C.LAMP, 2);
+  drawTextCentered(ctx, m.isOwner ? 'YOU RUN THE DOOR' : `THE DOOR: ${m.ownerName ?? '?'}`, W / 2, 30, C.PAPER);
+  if (m.isOwner) CROWN(3, W / 2 - 12, 50);
+  blit(ctx, playerSprite(look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand'), W / 2 - 24, 76, false, 3);
+  const y = 134;
+  frame(ctx, 8, y, W - 16, 40, C.PAPER);
+  if (m.rule === 'moonwalk') {
+    drawTextCentered(ctx, 'RULE: MOONWALK', W / 2, y + 8, C.VELVET);
+    drawTextCentered(ctx, m.isOwner ? 'THEY HAVE TO LET GO' : 'THE LINE MUST LET GO', W / 2, y + 22, C.INK);
+  } else {
+    drawTextCentered(ctx, 'NO RULE YET', W / 2, y + 8, C.STONE);
+    drawTextCentered(ctx, `${m.ownerName ?? 'THE DOOR'} IS PICKING`, W / 2, y + 22, C.INK);
+  }
+  drawTextCentered(ctx, `SCORE ${m.score}`, W / 2, y + 50, C.LAMP);
+  drawTextCentered(ctx, `LAST CALL IN ${secs(m.timeLeft - T.PUSH - T.VOTE)}S`, W / 2, y + 64, C.STONE_HI);
+  wrap('AT LAST CALL: GUARD THE ROPE, THEN THE LOUNGE VOTES ON THE CROWN', 24)
+    .forEach((l, i) => drawTextCentered(ctx, l, W / 2, y + 82 + i * 9, C.STONE));
+}
+
+function drawLivePush(defend: boolean, dt: number) {
+  const m = me!;
+  const team = defend ? C.LAMP : C.SAFE;
+  rect(ctx, 0, 0, W, scr.h, holding ? C.PAPER : team);
+  dither(ctx, 0, 0, W, scr.h, C.INK, Math.floor(t * 6));
+  rect(ctx, 0, 10, W, 20, C.INK);
+  drawTextCentered(ctx, defend ? 'TEAM LOUNGE' : 'TEAM CROWD', W / 2, 14, team, 2);
+  rect(ctx, 20, 33, W - 40, 13, C.INK);
+  drawTextCentered(ctx, defend ? 'HOLD THE ROPE' : 'BREAK THE ROPE', W / 2, 36, C.PAPER);
+  frame(ctx, 14, 56, W - 28, 80, team, C.INK);
+  drawTextCentered(ctx, 'TAP!', W / 2, 78 + (holding ? 1 : 0), C.INK, 4);
+  rect(ctx, 14, 144, W - 28, 70, C.INK);
+  drawTextCentered(ctx, `${m.pushTaps} TAPS`, W / 2, 150, C.PAPER, 2);
+  drawTextCentered(ctx, defend ? 'KEEP THEM OUT' : 'RUSH THE DOOR', W / 2, 172, team);
+  drawTextCentered(ctx, secs(m.timeLeft - T.VOTE), W / 2, 186, C.PAPER, 3);
+  for (const c of coins) { c.y += c.vy * dt; c.vy += 260 * dt; c.life -= dt; blit(ctx, icon.star(), c.x, c.y); }
+  coins = coins.filter((c) => c.life > 0);
+  hit('mash', 0, 0, W, scr.h);
+}
+
+function voteBlock(y: number) {
+  const v = me!.vote;
+  if (!v) return;
+  meter(ctx, 12, y, W - 24, 10, v.needed ? Math.min(1, v.cast / v.needed) : 0, v.cast >= v.needed ? C.SAFE : C.NEON, Math.max(1, v.needed));
+  drawTextCentered(ctx, `${v.cast} OF ${v.needed} VOTES NEEDED`, W / 2, y + 14, C.PAPER);
+  if (v.successorName) drawTextCentered(ctx, `NEXT VIP: ${v.successorName}`, W / 2, y + 26, C.LAMP);
+}
+
+function drawLiveSupport() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  dither(ctx, 0, 0, W, 60, C.VELVET);
+  drawTextCentered(ctx, 'COUP?', W / 2, 8, C.LAMP, 3);
+  drawTextCentered(ctx, 'TAKE THE CROWN FROM', W / 2, 36, C.PAPER);
+  drawTextCentered(ctx, m.ownerName ?? '?', W / 2, 47, C.LAMP);
+  const cy = 124;
+  const ready = t - roleSince >= 0.5;
+  if (m.voted) {
+    frame(ctx, 20, cy - 30, W - 40, 50, C.SAFE, C.INK);
+    drawTextCentered(ctx, 'VOTED', W / 2, cy - 14, C.INK, 2);
+  } else {
+    bigButton(W / 2, cy, 46, ready ? 'VOTE' : '...', ready ? 'TAP ONCE' : 'LIFT YOUR THUMB', ready ? C.NEON : C.STONE);
+  }
+  voteBlock(cy + 60);
+  drawTextCentered(ctx, secs(m.timeLeft), W / 2, scr.h - 26, C.PAPER, 2);
+}
+
+function drawLiveDefending() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, Math.floor(t * 3) % 2 ? C.NIGHT : C.BRICK);
+  drawTextCentered(ctx, 'THEY WANT', W / 2, 12, C.LAMP, 2);
+  drawTextCentered(ctx, 'YOUR CROWN', W / 2, 30, C.LAMP, 2);
+  CROWN(4, W / 2 - 16, 56);
+  blit(ctx, playerSprite(look, 'freeze'), W / 2 - 24, 86, false, 3);
+  if (Math.floor(t * 3) % 2) blit(ctx, icon.sweat(), W / 2 + 26, 84);
+  voteBlock(150);
+  drawTextCentered(ctx, 'NOTHING TO DO BUT SWEAT', W / 2, 194, C.STONE_HI);
+  drawTextCentered(ctx, secs(m.timeLeft), W / 2, scr.h - 26, C.PAPER, 2);
+}
+
+function drawLiveOutsideVote() {
+  const m = me!;
+  rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+  drawTextCentered(ctx, 'OUTSIDE', W / 2, 20, C.STONE_HI, 2);
+  drawTextCentered(ctx, 'THE LOUNGE', W / 2, 38, C.STONE_HI, 2);
+  blit(ctx, playerSprite(look, 'stand'), W / 2 - 24, 64, false, 3);
+  drawTextCentered(ctx, 'THE LOUNGE IS VOTING', W / 2, 124, C.PAPER);
+  drawTextCentered(ctx, `ON ${m.ownerName ?? 'THE'}'S CROWN`, W / 2, 134, C.PAPER);
+  drawTextCentered(ctx, 'WATCH THE BIG SCREEN', W / 2, 156, C.LAMP);
+  drawTextCentered(ctx, secs(m.timeLeft), W / 2, scr.h - 26, C.PAPER, 2);
+}
+
+function drawLiveReveal() {
+  const m = me!;
+  const r = m.reveal;
+  const win = !!r && r.winnerId === m.id;
+  if (win) {
+    rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+    dither(ctx, 0, 0, W, scr.h, Math.floor(t * 8) % 2 ? C.LAMP : C.LAMP_LO, Math.floor(t * 8));
+    frame(ctx, 8, 16, W - 16, 196, C.PAPER, C.INK);
+    drawTextCentered(ctx, "YOU'RE", W / 2, 26, C.VELVET, 2);
+    drawTextCentered(ctx, "TONIGHT'S", W / 2, 44, C.VELVET, 2);
+    drawTextCentered(ctx, 'VIP', W / 2, 62, C.VELVET, 2);
+    CROWN(3, W / 2 - 12, 82);
+    blit(ctx, playerSprite(look, Math.floor(t * 4) % 2 ? 'cheer' : 'stand'), W / 2 - 24, 104, false, 3);
+    let y = 160;
+    if (r?.prevOwnerName) {
+      drawTextCentered(ctx, 'YOU TOOK THE CROWN', W / 2, y, C.INK);
+      drawTextCentered(ctx, `FROM ${r.prevOwnerName}`, W / 2, y + 10, C.INK);
+      y += 24;
+    }
+    drawTextCentered(ctx, `#1 OF ${m.total}  SCORE ${m.score}`, W / 2, y, C.STONE);
+  } else {
+    rect(ctx, 0, 0, W, scr.h, C.NIGHT);
+    drawTextCentered(ctx, 'YOU FINISHED', W / 2, 16, C.STONE_HI);
+    drawTextCentered(ctx, `#${m.rank} OF ${m.total}`, W / 2, 30, C.PAPER, 3);
+    blit(ctx, playerSprite(look, 'stand'), W / 2 - 24, 60, false, 3);
+    drawTextCentered(ctx, `SCORE ${m.score}`, W / 2, 114, C.LAMP);
+    frame(ctx, 8, 130, W - 16, r?.prevOwnerName ? 58 : 38, C.PAPER);
+    drawTextCentered(ctx, "TONIGHT'S VIP:", W / 2, 138, C.STONE);
+    if (r?.winnerName) CROWN(1, W / 2 - textWidth(r.winnerName) / 2 - 12, 149);
+    drawTextCentered(ctx, r?.winnerName ?? 'NOBODY', W / 2, 150, C.VELVET);
+    if (r?.prevOwnerName) {
+      const mine = r.prevOwnerName === m.name;
+      drawTextCentered(ctx, mine ? 'TOOK YOUR CROWN' : 'TOOK THE CROWN FROM', W / 2, 164, mine ? C.ALERT : C.INK);
+      drawTextCentered(ctx, mine ? 'AT THE BUZZER' : r.prevOwnerName, W / 2, 174, C.INK);
+    }
+  }
+  drawTextCentered(ctx, 'WATCH THE BIG SCREEN', W / 2, scr.h - 14, C.PAPER);
+}
 
 // ---------- loop ----------
 let last = performance.now();
@@ -597,7 +950,8 @@ function loop(now: number) {
   last = now; t += dt; st += dt;
   scr.fitWidth(host, W);
   hits = [];
-  switch (state) {
+  if (LIVE) drawLive(dt);
+  else switch (state) {
     case 'join': drawJoin(); break;
     case 'sneak': case 'looking': case 'dodge': case 'flip': drawSneak(dt); break;
     case 'shake': drawShake(); break;
@@ -619,5 +973,6 @@ function loop(now: number) {
   drawCurtain(dt);
   requestAnimationFrame(loop);
 }
-go((new URLSearchParams(location.search).get('state') as S) || 'join');
+document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
+go((params.get('state') as S) || 'join');
 requestAnimationFrame(loop);

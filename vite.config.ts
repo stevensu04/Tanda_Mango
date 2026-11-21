@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 import { networkInterfaces } from 'node:os';
+import { gamePlugin } from './server/plugin';
 
 // Phones can't open "localhost", so the lobby QR code needs the laptop's LAN address.
 function lanAddress(): string {
@@ -17,6 +18,7 @@ const PORT = 5173;
 export default defineConfig({
   root: 'web',
   appType: 'mpa',
+  plugins: [gamePlugin()],
   server: { host: true, port: PORT },
   define: {
     __LAN_ORIGIN__: JSON.stringify(`http://${lanAddress()}:${PORT}`),

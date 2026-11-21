@@ -13,6 +13,20 @@ This inventory covers Claude’s local linked build. At the time of review, the 
 | **Preview or partial implementation** | The linked owner console offers Moonwalk. Other chaos rules, Shake and several lounge powers have design previews. Shake still needs live scoring, sensor permission handling and a tested Mash fallback in the linked round. |
 | **Outstanding delivery or verification** | Live Claude commentary and catch roasts with scripted fallback, personal round-end mugshots, the three-level solo gauntlet, NPC fill for small rooms and full host controls. Fresh-clone setup and a 100-client load run still need verification. |
 
+### Running a linked round
+
+```bash
+npm install
+npm run dev
+```
+
+1. Open `http://localhost:5173/screen.html` on the projector laptop. Phones scan its QR code, which points at the laptop's LAN address.
+2. Each phone picks a look and a name, then taps **Get in line**. The projector lobby lists only joined phones, and the count is the real head count. No mock crowd appears in linked mode.
+3. The host presses **S** on the projector to start and **R** to reset to a new lobby.
+4. To check the round without phones, run `npm run sim` in a second terminal. It drives four scripted phones through the "first entrant loses the throne" scenario and checks that the projector and every phone agree on the lobby, Moonwalk and the winner. Add `-- --allow-extra` to let real phones join the same round.
+
+The old design previews are still available at `screen.html?preview` and `play.html?preview`, which include the dev toolbar. **Do not edit `server/` during a playtest.** Vite restarts the server on any change there, and the room is lost.
+
 ### Recommended order for Claude
 
 1. **P0 — Reproduce the round on another laptop.** Once the linked build is published, start from a fresh clone, join with four real phones, reconnect one mid-round and start a second round. Record where the host has to intervene.
@@ -37,6 +51,8 @@ On 21 November 2026, one projector and four independent Chrome phone sessions co
 
 - **Lead with LET GO.** When Moonwalk starts while a player’s thumb is down, make **LET GO** the largest cue in the button. Once they release and their avatar moves, switch the button to **HOLD TO FREEZE**. In the tested version, **HOLD** was the largest word at the moment the player needed to release.
 - **Give #1 one meaning on the results screen.** The ranking showed TOTALLY 21 first with 70 points and DJ OYSTER second with 100. The adjacent first-entry award also labelled DJ OYSTER **#1**. Label the award **FIRST THROUGH THE DOOR — DJ OYSTER** and explain that the crown holder ranks first.
+
+**Changed in the local build. Re-test both with first-time players.** Under Moonwalk, a held thumb now reads **LET GO / TO MOVE** during safe moments. Once released, the button reads **HOLD / TO FREEZE**, and during Gus's warning and look it reads **HOLD / DON'T LET GO**. On the projector results, the ranking header now reads **RANKING: CROWN FIRST** and the crown appears beside the winner's name. The first-entry award is now **FIRST THROUGH THE DOOR** with no number.
 
 ## Earlier Phase 1 preview walkthrough
 
