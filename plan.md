@@ -101,6 +101,7 @@ Once you're in, your phone becomes a one-button power panel (each power has a co
 ### A.6 Finale: Mosh-Pit Rush (last 15 seconds)
 - Everyone still outside **mashes and shakes together** to push a giant crowd meter against the bouncer, while Lounge players mash to help him hold the line.
 - **Crowd wins** → the rope snaps and everyone floods in. **Bouncer wins** → he dusts off his hands, and Claude delivers a closing roast.
+- The meter result **multiplies scores** (see A.10) and doesn't replace them: crowd wins = ×1.5 for everyone outside. The top finale masher also earns a bonus.
 
 ### A.7 Claude's role (always around the action, never blocking it)
 - **Catch roasts:** generated *during* the 5-second microgame, so they're ready the moment the result lands. For example: *"DAVE. You call that dancing? My nan shakes harder at bingo."*
@@ -123,6 +124,16 @@ Once you're in, your phone becomes a one-button power panel (each power has a co
 - **Phone sabotage:** as Owner chaos or a punishment, the bouncer can make the SNEAK button **dodge your thumb**, **flip your screen upside down**, or show a fake CAPTCHA ("Tap all squares containing dignity", which is one tap to dismiss).
 - **Session memory:** Claude remembers who keeps getting caught and how ("Dave, third time. Do you *want* to be here?").
 - **Club Mugshot receipt** at the buzzer: avatar, times caught, best dance score, harshest roast, distance crawled and a **Security Threat Rating**, ready to screenshot.
+
+### A.10 Making the winner clear: one number, one crown
+1. **Score with a live rank.** Reaching the rope earns points by order (1st in = 100, then 70, 50, …). Passing a microgame is +10, getting flung is −10. The projector shows a **top-5 ticker** throughout.
+2. **Crown the VIP Owner at the buzzer.** Whoever holds the owner seat when the round ends is **"Tonight's VIP"**, so the coup mechanic (A.4) becomes a last-minute fight for the top spot.
+3. **The finale feeds the score** (see A.6) and doesn't replace it.
+4. **One reveal on the end screen.** Drumroll, then the winner's avatar on the Lounge throne with a Claude roast or toast. The three category boards (fastest in, most caught, best dancer) shrink to small **side awards** below it.
+5. **Every phone shows its result.** Winner: gold **"YOU'RE TONIGHT'S VIP"**. Everyone else: "You finished #7 of 23". The mugshot gets a rank line.
+6. **Solo gauntlet:** the win is clearing Area 51. It shows a **"BOUNCER BEATEN"** stamp plus a time and a catch count.
+
+*Minimum viable version if time is short: items 2 and 4 only (no new scoring).*
 
 ---
 
@@ -203,7 +214,7 @@ web/
 9. **Bouncer Brain HUD** (overlay): Ego / Paranoia / Boredom / Suspicion bars + an inner-monologue bubble + the commentary ticker.
 10. **Mosh-Pit Rush finale**: a giant crowd-vs-bouncer meter and the crowd surging, plus the rope-snaps / bouncer-wins end states.
 11. **NICE TRY, NERD**: alarm strobe around a cheater's avatar.
-12. **End of round**: leaderboard (fastest in, most caught, best dancer) + "Mugshots sent to your phones".
+12. **End of round**: drumroll → **Tonight's VIP on the Lounge throne** (A.10), with the leaderboards (fastest in, most caught, best dancer) as small side awards + "Mugshots sent to your phones".
 
 **Phone (`/play`)**: every screen has **one big obvious action**
 1. **Join**: avatar preview, a "Reroll look" button, a name field (optional, auto-filled with a funny default like "Sneaky Pete") and a **"Tap to enable shaking"** step (the iOS motion permission).
