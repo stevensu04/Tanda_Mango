@@ -2,6 +2,27 @@
 
 **Hold to sneak. Let go before Gus turns around.** Jailbreak the Bouncer is a hackathon party game designed for one shared screen and a room full of phones. The projector shows the entrance to Club Velvet, and each phone is a controller.
 
+## Phase 2 status · 21 November 2026
+
+This inventory covers Claude’s local linked build. At the time of review, the published game on main was still the Phase 1 preview. Jonathan’s Phase 2 completion criteria are in [the build plan, §3.8](./plan.md#38-definition-of-done-phase-2).
+
+| Status | What the team can count on |
+| --- | --- |
+| **Playable locally** | Four simulated phones can join, sneak, activate Moonwalk, push or defend the rope, vote and see the same winner. The linked catch challenge supports Mash. The finale runs for 10 seconds of pushing and 5 seconds of voting. See the observed results below. |
+| **Implemented, needs physical-device acceptance** | Check QR entry on venue Wi-Fi, iOS Safari and Android Chrome. Lock and reopen a phone, then refresh mid-round and verify its name and position. Test warning and fake-out timing, catch fairness and haptics. Record actual first entry time against the 35-second target. The server’s four-second nap gives stragglers an opening. |
+| **Preview or partial implementation** | The linked owner console offers Moonwalk. Other chaos rules, Shake and several lounge powers have design previews. Shake still needs live scoring, sensor permission handling and a tested Mash fallback in the linked round. |
+| **Outstanding delivery or verification** | Live Claude commentary and catch roasts with scripted fallback, personal round-end mugshots, the three-level solo gauntlet, NPC fill for small rooms and full host controls. Fresh-clone setup and a 100-client load run still need verification. |
+
+### Recommended order for Claude
+
+1. **P0 — Reproduce the round on another laptop.** Once the linked build is published, start from a fresh clone, join with four real phones, reconnect one mid-round and start a second round. Record where the host has to intervene.
+2. **P0 — Test the two cues that confused the browser playtest.** Lead with **LET GO** when Moonwalk starts under a held thumb. Reserve **#1** for final rank and label first entry separately. Count unprompted releases and ask each player who won.
+3. **P1 — Deliver one complete Gus interaction.** Generate a catch roast during the five-second challenge, use a scripted line on timeout and keep the room moving. Rehearse three catches and deliver each player’s own mugshot at the buzzer.
+4. **P1 — Expand the live choices.** Wire Shake and its tap fallback, then offer three working chaos choices. Try Lights Out next because its effect is visible across the room.
+5. **P2 — Finish the remaining play modes and scale checks.** Complete solo through Area 51, fill small rooms with NPCs, add host controls and run 100 simulated clients. Solo remains part of Jonathan’s Phase 2 acceptance criteria.
+
+**Round length is an open tuning decision.** The local build runs **90 seconds** including the finale. Jonathan’s demo script specifies **120 seconds**. Start the physical playtest at 90 seconds and record time to first entry, number of catches and time spent playing under Moonwalk before the rush. Use those observations to decide whether the extra 30 seconds would improve the demo.
+
 ## Latest linked playtest
 
 On 21 November 2026, one projector and four independent Chrome phone sessions completed a round in the same room on the local development build. The networking changes were uncommitted at the time of testing.
