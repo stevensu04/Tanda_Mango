@@ -64,9 +64,15 @@ function busy(on: boolean) {
 }
 
 input.addEventListener('input', () => {
-  const v = clean(input.value);
-  if (v !== input.value) input.value = v;
-  if (hint.classList.contains('bad')) say(HINT, false);
+  const raw = input.value;
+  const v = clean(raw);
+  if (v !== raw) {
+    // Rewriting the value (lowercase -> caps) would throw the caret to the end; keep it where the player is fixing a letter.
+    const at = Math.min(v.length, clean(raw.slice(0, input.selectionStart ?? raw.length)).length);
+    input.value = v;
+    input.setSelectionRange(at, at);
+  }
+  if (hint.textContent !== HINT) say(HINT, false);
 });
 
 // Keyboard up: iOS covers the page instead of shrinking it, so fold the backdrop away
@@ -130,5 +136,8 @@ form.addEventListener('submit', async (e) => {
 
 // Arriving with a code (/?room=ABCD) or coming back with the browser's back button.
 const pre = clean(new URLSearchParams(location.search).get('room') ?? '') || sessionStorage.getItem(KEY) || '';
-if (pre) input.value = pre;
+if (pre) {
+  input.value = pre;
+  say('Check the letters against the big screen, then join.', false);
+}
 window.addEventListener('pageshow', () => busy(false));   // back-forward cache keeps the old "Checking…"

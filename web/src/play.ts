@@ -855,6 +855,7 @@ function liveDown(id: string | null, x: number, y: number): boolean {
       haptic.tap();
       return true;
     case 'soloGo': location.href = 'play.html'; return true;
+    case 'retype': location.href = `./?room=${encodeURIComponent(m?.code ?? roomCode)}`; return true;
     case 'menu': net.send({ t: 'solo', op: 'menu' }); sfx.blip(); return true;
     case 'again': net.send({ t: 'solo', op: 'start', level: 0 }); sfx.vip(); return true;
     case 'save': if (m?.mugshot) { saveMugshot(m.mugshot, look); savedAt = t; sfx.pass(); } return true;
@@ -941,16 +942,23 @@ function drawLive(dt: number) {
   if (roomCode && me?.id && me.role !== 'no-room' && role !== 'caught' && role !== 'break' && role !== 'defend') refreshButton();
 }
 
+/** Old QR or dead link: retyping the code (on the home page, prefilled) is the way in; solo is the fallback. */
 function drawNoRoom(m: Me) {
   rect(ctx, 0, 0, W, scr.h, C.NIGHT);
   dither(ctx, 0, 0, W, 72, C.VELVET);
   drawTextCentered(ctx, 'ROOM', W / 2, 16, C.PAPER, 2);
   drawTextCentered(ctx, m.code ?? roomCode, W / 2, 38, C.LAMP, 4);
   drawTextCentered(ctx, 'IS CLOSED', W / 2, 84, C.PAPER, 2);
-  drawTextCentered(ctx, 'ASK FOR', W / 2, 108, C.STONE_HI);
-  drawTextCentered(ctx, 'THE NEW CODE', W / 2, 118, C.STONE_HI);
-  drawTextCentered(ctx, 'OR PLAY ON YOUR OWN', W / 2, 140, C.STONE_HI);
-  bigButtonRect('soloGo', 'PLAY SOLO', Math.max(158, Math.min(scr.h - 60, 170)));
+  drawTextCentered(ctx, 'OLD QR OR A TYPO?', W / 2, 106, C.STONE_HI);
+  drawTextCentered(ctx, 'CHECK THE BIG SCREEN', W / 2, 116, C.STONE_HI);
+  // primary: two lines of big type, since one line won't fit 160 px
+  const py = Math.max(134, Math.min(scr.h - 110, 160)), ph = 48;
+  rect(ctx, 8, py + 4, W - 16, ph, C.INK);
+  frame(ctx, 8, py, W - 16, ph, C.NEON, C.INK);
+  drawTextCentered(ctx, 'RE-ENTER', W / 2, py + 9, C.INK, 2);
+  drawTextCentered(ctx, 'ROOM CODE', W / 2, py + 26, C.INK, 2);
+  hit('retype', 8, py, W - 16, ph + 4);
+  button('soloGo', 'PLAY SOLO', 8, py + ph + 18, W - 16, 22, C.PAPER);
 }
 
 /** Small corner button during any solo level. `top` puts it top-left (the stare-down keeps its bottom for tapping). */
